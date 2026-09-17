@@ -979,6 +979,48 @@ type: upload
         self.get(expiring["file"], expect_status=410)
         self.get(keep["file"])
 
+    def test_upload_retention_failure(self):
+        """An upload whose deletion fails does not prevent deleting the other expired uploads."""
+        self.login_test1()
+        d = self.create_doc(
+            initial_par="""
+#- {plugin=csPlugin #expiring}
+type: upload
+uploadRetention: 30
+        """
+        )
+        uploads = [
+            self.do_plugin_upload(
+                d,
+                "test",
+                "test.txt",
+                f"{d.id}.expiring",
+                "expiring",
+                expect_version=version,
+            )[1]
+            for version in (1, 2, 3)
+        ]
+        for ur in uploads:
+            au = db.session.get(AnswerUpload, ur["block"])
+            au.delete_after = get_current_time() - timedelta(minutes=1)
+        db.session.commit()
+        # Deleting the first upload fails because its path is a directory.
+        broken_path = PluginUpload(
+            db.session.get(Block, uploads[0]["block"])
+        ).filesystem_path
+        broken_path.unlink()
+        broken_path.mkdir()
+
+        self.assertEqual(2, delete_expired_uploads())
+        self.assertIsNone(db.session.get(AnswerUpload, uploads[0]["block"]).deleted_at)
+        for ur in uploads[1:]:
+            self.get(ur["file"], expect_status=410)
+        # The failed upload is tried again the next time.
+        broken_path.rmdir()
+        broken_path.write_text("test")
+        self.assertEqual(1, delete_expired_uploads())
+        self.get(uploads[0]["file"], expect_status=410)
+
     def test_upload_forced_name_not_deleted(self):
         """Uploads with a forced name share the file, so it is never deleted."""
         self.login_test1()

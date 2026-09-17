@@ -20,7 +20,7 @@ from timApp.timdb.exceptions import TimDbException
 from timApp.timdb.sqa import db, run_sql
 from timApp.user.user import User
 from timApp.util.file_utils import compute_file_sha1
-from timApp.util.logger import log_info
+from timApp.util.logger import log_error, log_info
 from timApp.util.utils import get_current_time
 
 DIR_MAPPING = {
@@ -436,26 +436,46 @@ def delete_expired_uploads() -> int:
 
     :return: The number of deleted files.
     """
-    expired = (
+    expired_ids = (
         run_sql(
-            select(AnswerUpload).filter(
+            select(AnswerUpload.upload_block_id)
+            .filter(
                 (AnswerUpload.delete_after < get_current_time())
                 & (AnswerUpload.deleted_at == None)
             )
+            .order_by(AnswerUpload.upload_block_id)
         )
         .scalars()
         .all()
     )
     deleted = 0
-    for au in expired:
-        up = PluginUpload(au.block)
-        if up.has_forced_name:
-            # Not deletable; do not try again.
-            au.delete_after = None
-        elif up.delete_file():
-            deleted += 1
-        # Commit one by one so that the database stays in sync with the disk if a later deletion fails.
-        db.session.commit()
+    failed = 0
+    for block_id in expired_ids:
+        # A failing upload must not prevent deleting the others, so the errors are handled one by one.
+        try:
+            au = db.session.get(AnswerUpload, block_id)
+            up = PluginUpload(au.block)
+            if up.has_forced_name:
+                # Not deletable; do not try again.
+                au.delete_after = None
+                was_deleted = False
+            else:
+                was_deleted = up.delete_file()
+            # Commit one by one so that the database stays in sync with the disk if a later deletion fails.
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            failed += 1
+            log_error(
+                f"Failed to delete expired upload (block {block_id}): {type(e).__name__}: {e}"
+            )
+        else:
+            if was_deleted:
+                deleted += 1
+    if failed:
+        log_error(
+            f"Deleted {deleted} expired uploads; deleting {failed} expired uploads failed"
+        )
     return deleted
 
 
