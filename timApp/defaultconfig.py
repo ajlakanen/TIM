@@ -243,6 +243,9 @@ LOG_HOST = False
 
 MAX_ANSWER_CONTENT_SIZE = 200 * 1024  # bytes
 
+# How long a plugin upload is kept if it is never saved in an answer (e.g. because saving the answer failed).
+UNSAVED_UPLOAD_RETENTION = timedelta(days=1)
+
 SCIM_ALLOWED_IP = {"127.0.0.1"}
 SCIM_ALLOW_UPDATE_HAKA_USER_INFO = False
 

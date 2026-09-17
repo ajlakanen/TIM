@@ -726,6 +726,65 @@ type: upload
             self.get(path, expect_status=410)
         self.get(keep)
 
+    def test_upload_unsaved(self):
+        """An upload that is never saved in an answer is deleted after a short time."""
+        self.login_test1()
+        d = self.create_doc(
+            initial_par="""
+#- {plugin=csPlugin #expiring}
+type: upload
+uploadRetention: 30
+
+#- {plugin=csPlugin #keep}
+type: upload
+        """
+        )
+
+        def upload(task: str, version: int, save_answer: bool) -> AnswerUpload:
+            _, ur, _ = self.do_plugin_upload(
+                d,
+                "test",
+                "test.txt",
+                f"{d.id}.{task}",
+                task,
+                expect_version=version,
+                save_answer=save_answer,
+            )
+            return db.session.get(AnswerUpload, ur["block"])
+
+        def days_left(au: AnswerUpload) -> float:
+            return (au.delete_after - get_current_time()).total_seconds() / 86400
+
+        # Saving the answer "fails": the uploads are not posted as an answer.
+        unsaved = [upload("expiring", 1, False), upload("keep", 1, False)]
+        for au in unsaved:
+            self.assertIsNone(au.answer_id)
+            self.assertAlmostEqual(1, days_left(au), places=1)
+        # Saving the upload in an answer replaces the short retention period with the one of the task.
+        self.assertAlmostEqual(30, days_left(upload("expiring", 2, True)), places=1)
+        saved_keep = upload("keep", 2, True)
+        self.assertIsNone(saved_keep.delete_after)
+
+        self.assertEqual(0, delete_expired_uploads())
+        for block_id in [au.upload_block_id for au in unsaved]:
+            au = db.session.get(AnswerUpload, block_id)
+            au.delete_after = get_current_time() - timedelta(minutes=1)
+        db.session.commit()
+        self.assertEqual(2, delete_expired_uploads())
+        self.get(f"/uploads/{saved_keep.block.description}")
+
+        # A deleted upload cannot be saved in an answer anymore.
+        path = f"/uploads/{d.id}/keep/testuser1/1/test.txt"
+        self.get(path, expect_status=410)
+        self.post_answer(
+            "csPlugin",
+            f"{d.id}.keep",
+            {"uploadedFiles": [{"path": path, "type": "text/plain"}], "type": "upload"},
+            expect_status=400,
+            expect_content="The uploaded file test.txt has been deleted "
+            "and cannot be saved in an answer. Upload the file again.",
+        )
+
     def test_upload_retention(self):
         """Uploads of a task with uploadRetention are deleted after the retention period."""
         self.login_test1()
@@ -795,7 +854,14 @@ type: upload
         self.assertIn("Total: 0 files", run_delete("--older-than", "0", "--no-dry-run"))
 
     def do_plugin_upload(
-        self, d: DocInfo, file_content, filename, task_id, task_name, expect_version=1
+        self,
+        d: DocInfo,
+        file_content,
+        filename,
+        task_id,
+        task_name,
+        expect_version=1,
+        save_answer=True,
     ):
         ur = self.post(
             f"/pluginUpload/{d.id}/{task_name}/",
@@ -820,8 +886,9 @@ type: upload
             "uploadedType": mimetype,
             "type": "upload",
         }
-        resp = self.post_answer("csPlugin", task_id, user_input)
-        self.check_ok_answer(resp)
+        if save_answer:
+            resp = self.post_answer("csPlugin", task_id, user_input)
+            self.check_ok_answer(resp)
         return mimetype, ur[0], user_input
 
     def check_failed_answer(self, resp, is_new=False):

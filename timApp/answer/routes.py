@@ -121,6 +121,8 @@ from timApp.plugin.plugintype import PluginTypeBase
 from timApp.plugin.taskid import TaskId, TaskIdAccess
 from timApp.timdb.exceptions import TimDbException
 from timApp.timdb.sqa import db, run_sql
+from timApp.upload.upload import set_saved_upload_delete_after
+from timApp.upload.uploadedfile import PluginUpload
 from timApp.user.groups import (
     verify_group_view_access,
 )
@@ -1343,6 +1345,8 @@ def post_answer_impl(
         if result["savedNew"] is not None and uploads:
             # Associate this answer with the upload entries
             for upload in uploads:
+                if upload.answer_id is None:
+                    set_saved_upload_delete_after(plugin, upload)
                 upload.answer_id = result["savedNew"]
 
     db.session.commit()
@@ -1410,7 +1414,14 @@ def check_answerupload_file_accesses(
                         d, message="You don't have permission to touch this file."
                     )
                     doc_map[did] = d
-        uploads.append(block.answerupload.first())
+        au = block.answerupload.first()
+        # An unsaved upload is deleted after a short time (UNSAVED_UPLOAD_RETENTION)
+        if au and au.deleted_at is not None and au.answer_id is None:
+            raise RouteException(
+                f"The uploaded file {PluginUpload(block).filename} has been deleted "
+                f"and cannot be saved in an answer. Upload the file again."
+            )
+        uploads.append(au)
     return uploads
 
 

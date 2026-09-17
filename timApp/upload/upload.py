@@ -12,12 +12,13 @@ from urllib.parse import unquote, urlparse
 from PIL import Image
 from PIL import UnidentifiedImageError
 from PIL.Image import DecompressionBombError, registered_extensions
-from flask import Blueprint, request, send_file, Response, url_for
+from flask import Blueprint, request, send_file, Response, url_for, current_app
 from img2pdf import convert
 from sqlalchemy import case, select
 from werkzeug.exceptions import Gone
 from werkzeug.utils import secure_filename
 
+from timApp.answer.answer_models import AnswerUpload
 from timApp.auth.accesshelper import (
     verify_view_access,
     verify_seeanswers_access,
@@ -46,6 +47,7 @@ from timApp.item.validation import (
     validate_item_and_create_intermediate_folders,
     validate_uploaded_document_content,
 )
+from timApp.plugin.plugin import Plugin
 from timApp.plugin.pluginexception import PluginException
 from timApp.plugin.taskid import TaskId, TaskIdAccess
 from timApp.timdb.dbaccess import get_files_path
@@ -159,6 +161,27 @@ def upload_deleted_message(up: PluginUpload) -> str:
 def raise_if_deleted(up: PluginUpload) -> None:
     if up.is_deleted:
         raise UploadDeleted(upload_deleted_message(up))
+
+
+def get_upload_delete_after(plugin: Plugin, uploaded: datetime) -> datetime | None:
+    """Gets the time when an upload of the task can be deleted automatically (uploadRetention).
+
+    :param plugin: The task of the upload.
+    :param uploaded: The time when the file was uploaded.
+    :return: The deletion time, or None if the task keeps the uploads indefinitely.
+    """
+    retention_days = plugin.known.uploadRetention
+    if isinstance(retention_days, int) and retention_days > 0:
+        return uploaded + timedelta(days=retention_days)
+    return None
+
+
+def set_saved_upload_delete_after(plugin: Plugin, au: AnswerUpload) -> None:
+    """Replaces the short retention period of an unsaved upload with the retention period of the task.
+
+    Must be called when the upload is saved in an answer for the first time.
+    """
+    au.delete_after = get_upload_delete_after(plugin, au.block.created)
 
 
 def get_pluginupload(relfilename: str) -> tuple[str, PluginUpload]:
@@ -313,20 +336,25 @@ def pluginupload_file(doc_id: int, task_id: str):
         filename += file_extension
 
     p = task_access.plugin
-    delete_after = None
-    retention_days = p.known.uploadRetention
-    if isinstance(retention_days, int) and retention_days > 0:
-        delete_after = get_current_time() + timedelta(days=retention_days)
+    # An upload that is never saved in an answer is not visible anywhere, so it is kept only for a short time.
+    # The actual deletion time is set when the upload is saved in an answer (see set_saved_upload_delete_after).
+    # Uploads with a forced name are kept because they have a fixed address that may be referred to elsewhere.
+    unsaved_delete_after = None
+    if not force_upload_name:
+        unsaved_delete_after = (
+            get_current_time() + current_app.config["UNSAVED_UPLOAD_RETENTION"]
+        )
 
     f = UploadedFile.save_new(
         filename,
         BlockType.Upload,
         file_data=content,
         upload_info=PluginUploadInfo(
-            task_id_name=task_id, user=u, doc=d, delete_after=delete_after
+            task_id_name=task_id, user=u, doc=d, delete_after=unsaved_delete_after
         ),
         forced_name=bool(force_upload_name),
     )
+    delete_after = get_upload_delete_after(p, f.block.created)
     f.block.set_owner(u.get_personal_group())
     grant_access_to_session_users(f)
     if f.is_content_pdf:
@@ -338,7 +366,9 @@ def pluginupload_file(doc_id: int, task_id: str):
                 f"Please make sure the PDF is not broken."
             )
     if p.type == "reviewcanvas":
-        returninfo = convert_pdf_or_compress_image(f, u, d, task_id, delete_after)
+        returninfo = convert_pdf_or_compress_image(
+            f, u, d, task_id, unsaved_delete_after
+        )
     else:
         returninfo = [
             {
