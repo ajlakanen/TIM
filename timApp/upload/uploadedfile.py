@@ -1,5 +1,7 @@
+import json
 import os
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, NamedTuple, Union
 
@@ -18,6 +20,8 @@ from timApp.timdb.exceptions import TimDbException
 from timApp.timdb.sqa import db, run_sql
 from timApp.user.user import User
 from timApp.util.file_utils import compute_file_sha1
+from timApp.util.logger import log_info
+from timApp.util.utils import get_current_time
 
 DIR_MAPPING = {
     BlockType.File: "files",
@@ -280,6 +284,93 @@ class PluginUpload(UploadedFile):
     @property
     def filename(self):
         return self.relative_filesystem_path.parts[-1]
+
+    @property
+    def url_path(self) -> str:
+        """The path of the upload as it is saved in the answers."""
+        return f"/uploads/{self.relative_filesystem_path.as_posix()}"
+
+    @property
+    def answerupload(self) -> AnswerUpload | None:
+        return self.block.answerupload.first()
+
+    @property
+    def deleted_at(self) -> datetime | None:
+        """When the file was deleted from the disk, or None if it has not been deleted."""
+        au = self.answerupload
+        return au.deleted_at if au else None
+
+    @property
+    def is_deleted(self) -> bool:
+        return self.deleted_at is not None
+
+    def delete_file(self, deleted_by: User | None = None) -> bool:
+        """Deletes the uploaded file from the disk.
+
+        The database entries (Block, AnswerUpload and the answers) are kept so that it remains visible
+        that the file was uploaded. The answers that refer to the file are marked with the deletion time.
+
+        The directory of the file is kept on purpose: the running number of a new upload
+        is based on the number of existing directories (see :meth:`UploadedFile.save_new`).
+
+        :param deleted_by: The user who deleted the file. None if the file was deleted automatically.
+        :return: True if the file was deleted, False if it had already been deleted.
+        """
+        au = self.answerupload
+        if au is None:
+            # Early uploads may not have an AnswerUpload; create one to record the deletion.
+            au = AnswerUpload(block=self.block)
+            db.session.add(au)
+        if au.deleted_at is not None:
+            return False
+        self.filesystem_path.unlink(missing_ok=True)
+        au.deleted_at = get_current_time()
+        self._mark_deleted_in_answers(au.deleted_at)
+        log_info(
+            f"{deleted_by.name if deleted_by else 'TIM'} deleted upload {self.relative_filesystem_path} "
+            f"(block {self.id})"
+        )
+        return True
+
+    def _mark_deleted_in_answers(self, deleted_at: datetime) -> None:
+        from timApp.answer.answer import Answer
+
+        parts = self.relative_filesystem_path.parts
+        if len(parts) < 2:
+            return
+        url_path = self.url_path
+        answers = (
+            run_sql(
+                select(Answer).filter(
+                    (Answer.task_id == f"{parts[0]}.{parts[1]}")
+                    # The path is matched as it appears in the JSON content
+                    & Answer.content.contains(
+                        json.dumps(url_path)[1:-1], autoescape=True
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for a in answers:
+            try:
+                content = json.loads(a.content)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(content, dict):
+                continue
+            changed = False
+            files = content.get("uploadedFiles")
+            for f in files if isinstance(files, list) else []:
+                if isinstance(f, dict) and f.get("path") == url_path:
+                    f["deleted"] = deleted_at.isoformat()
+                    changed = True
+            # Older answers refer to a single file only
+            if content.get("uploadedFile") == url_path:
+                content["uploadedFileDeleted"] = deleted_at.isoformat()
+                changed = True
+            if changed:
+                a.content = json.dumps(content)
 
 
 CLASS_MAPPING = {

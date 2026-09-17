@@ -21,6 +21,7 @@ from timApp.document.docparagraph import DocParagraph
 from timApp.document.randutils import random_id
 from timApp.document.usercontext import UserContext
 from timApp.document.viewcontext import default_view_ctx
+from timApp.item.block import Block
 from timApp.plugin.plugin import Plugin, find_plugin_from_document
 from timApp.plugin.taskid import TaskId
 from timApp.tests.db.timdbtest import (
@@ -32,6 +33,7 @@ from timApp.tests.db.timdbtest import (
 )
 from timApp.tests.server.timroutetest import TimRouteTest
 from timApp.timdb.sqa import db, run_sql
+from timApp.upload.uploadedfile import PluginUpload
 from timApp.user.special_group_names import ANONYMOUS_USERNAME
 from timApp.user.user import User
 from timApp.user.usergroup import UserGroup
@@ -575,6 +577,69 @@ type: upload
             f"/uploads/{d.id}/testupload/testuser1/1/test.txt",
             expect_status=400,
             expect_content="Upload has not been associated with any answer; it should be re-uploaded",
+        )
+
+    def test_upload_delete_file(self):
+        """Deleting an upload removes only the file; the upload and its answer remain visible as deleted."""
+        self.login_test1()
+        d = self.create_doc(
+            initial_par="""
+#- {plugin=csPlugin #testupload}
+type: upload
+        """
+        )
+        task_id = f"{d.id}.testupload"
+        url = f"/uploads/{d.id}/testupload/testuser1/1/test.txt"
+        _, ur, _ = self.do_plugin_upload(d, "test", "test.txt", task_id, "testupload")
+        # The current csPlugin saves the files as a list
+        resp = self.post_answer(
+            "csPlugin",
+            task_id,
+            {"uploadedFiles": [{"path": url, "type": "text/plain"}], "type": "upload"},
+        )
+        self.check_ok_answer(resp)
+        self.get(url)
+
+        up = PluginUpload(db.session.get(Block, ur["block"]))
+        file_path = up.filesystem_path
+        self.assertTrue(file_path.exists())
+        self.assertFalse(up.is_deleted)
+        self.assertTrue(up.delete_file(self.current_user))
+        db.session.commit()
+
+        self.assertFalse(file_path.exists())
+        # The directory must remain because the numbering of the uploads is based on the directory count.
+        self.assertTrue(file_path.parent.exists())
+        up = PluginUpload(db.session.get(Block, ur["block"]))
+        self.assertTrue(up.is_deleted)
+        self.assertFalse(up.delete_file(self.current_user))
+
+        self.get(url, expect_status=410)
+        answers = (
+            run_sql(select(Answer).filter_by(task_id=task_id).order_by(Answer.id))
+            .scalars()
+            .all()
+        )
+        self.assertEqual(2, len(answers))
+        up = PluginUpload(db.session.get(Block, ur["block"]))
+        deleted_at = up.deleted_at.isoformat()
+        self.assertEqual(
+            deleted_at, json.loads(answers[0].content)["uploadedFileDeleted"]
+        )
+        self.assertEqual(
+            [{"path": url, "type": "text/plain", "deleted": deleted_at}],
+            json.loads(answers[1].content)["uploadedFiles"],
+        )
+
+        # The answer report must not break because of the deleted file.
+        self.assertIn("was deleted on", self.get(f"/allAnswersPlain/{task_id}"))
+
+        # A new upload must not reuse the number of the deleted upload.
+        self.do_plugin_upload(
+            d, "test2", "test.txt", task_id, "testupload", expect_version=2
+        )
+        self.assertEqual(
+            "test2", self.get_no_warn(f"/uploads/{d.id}/testupload/testuser1/2/test.txt")
         )
 
     def do_plugin_upload(

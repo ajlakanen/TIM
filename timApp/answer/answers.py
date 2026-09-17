@@ -44,7 +44,7 @@ from timApp.document.viewcontext import OriginInfo
 from timApp.plugin.plugintype import PluginType, PluginTypeLazy, PluginTypeBase
 from timApp.plugin.taskid import TaskId
 from timApp.timdb.sqa import db, run_sql
-from timApp.upload.upload import get_pluginupload
+from timApp.upload.upload import get_pluginupload, UploadDeleted
 from timApp.user.user import Consent, User
 from timApp.user.usergroup import UserGroup
 from timApp.util.answerutil import (
@@ -436,14 +436,20 @@ def get_all_answers(
                     prefix = "/uploads/"
                     if p.startswith(prefix):
                         p = p[len(prefix) :]
-                    mt, pu = get_pluginupload(p)
-                    if mt == "text/plain":
-                        try:
-                            answ = pu.data.decode()
-                        except UnicodeDecodeError:
-                            answ = UnicodeDammit(pu.data).unicode_markup
+                    try:
+                        mt, pu = get_pluginupload(p)
+                    except UploadDeleted as e:
+                        answ = f"ERROR: {e.description}"
                     else:
-                        answ = "ERROR: Uploaded file is binary; cannot show content."
+                        if mt == "text/plain":
+                            try:
+                                answ = pu.data.decode()
+                            except UnicodeDecodeError:
+                                answ = UnicodeDammit(pu.data).unicode_markup
+                        else:
+                            answ = (
+                                "ERROR: Uploaded file is binary; cannot show content."
+                            )
                 else:
                     answ = f"ERROR: There are more than 1 file uploads ({len(files)}) in this answer; cannot show content."
             elif "usercode" in line:

@@ -14,6 +14,7 @@ from PIL.Image import DecompressionBombError, registered_extensions
 from flask import Blueprint, request, send_file, Response, url_for
 from img2pdf import convert
 from sqlalchemy import case, select
+from werkzeug.exceptions import Gone
 from werkzeug.utils import secure_filename
 
 from timApp.auth.accesshelper import (
@@ -140,6 +141,19 @@ def check_and_format_filename(relfilename: str) -> str:
     return relfilename
 
 
+class UploadDeleted(Gone):
+    """The requested upload exists but its file has been deleted."""
+
+
+def raise_if_deleted(up: PluginUpload) -> None:
+    deleted_at = up.deleted_at
+    if deleted_at is not None:
+        raise UploadDeleted(
+            f"The file {up.filename} was deleted on {deleted_at.strftime('%Y-%m-%d')} "
+            f"and is no longer available."
+        )
+
+
 def get_pluginupload(relfilename: str) -> tuple[str, PluginUpload]:
     from timApp.peerreview.util.peerreview_utils import is_peerreview_enabled
 
@@ -185,6 +199,7 @@ def get_pluginupload(relfilename: str) -> tuple[str, PluginUpload]:
             )
 
     up = PluginUpload(block)
+    raise_if_deleted(up)
     p = up.filesystem_path.as_posix()
     mt = get_mimetype(p)
     return mt, up
@@ -244,6 +259,8 @@ def get_multiple_pluginuploads(relfilenames: list[str]) -> list[PluginUpload]:
                 )
             doc_set.add(tid.doc_id)
     ups = [PluginUpload(block) for block in blocks]
+    for up in ups:
+        raise_if_deleted(up)
     return ups
 
 
