@@ -1129,6 +1129,33 @@ type: upload
         self.get(ur["file"], expect_status=410)
         self.assertIn("Total: 0 files", run_delete("--older-than", "0", "--no-dry-run"))
 
+        # A failing deletion is not marked in the database and does not prevent deleting the other files.
+        broken, ok = [
+            self.do_plugin_upload(
+                d,
+                "test",
+                "test.txt",
+                f"{d.id}.testupload",
+                "testupload",
+                expect_version=version,
+            )[1]
+            for version in (2, 3)
+        ]
+        broken_path = PluginUpload(
+            db.session.get(Block, broken["block"])
+        ).filesystem_path
+        broken_path.unlink()
+        broken_path.mkdir()
+        output = run_delete("--older-than", "0", "--no-dry-run")
+        self.assertIn("Total: 1 files", output)
+        self.assertIn("Failed to delete 1 files", output)
+        self.get(ok["file"], expect_status=410)
+        db.session.expire_all()
+        self.assertIsNone(db.session.get(AnswerUpload, broken["block"]).deleted_at)
+        # A missing file that has not been marked as deleted is not an internal error.
+        broken_path.rmdir()
+        self.get(broken["file"], expect_status=404)
+
     def do_plugin_upload(
         self,
         d: DocInfo,

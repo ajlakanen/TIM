@@ -264,7 +264,11 @@ def get_pluginupload(relfilename: str) -> tuple[str, PluginUpload]:
     """Gets an upload whose file is available. Raises UploadDeleted if the file has been deleted."""
     up = find_pluginupload(relfilename)
     raise_if_deleted(up)
-    return up.content_mimetype, up
+    try:
+        mimetype = up.content_mimetype
+    except FileNotFoundError:
+        raise NotExist("The file of the upload was not found.")
+    return mimetype, up
 
 
 def find_pluginupload(relfilename: str) -> PluginUpload:
@@ -532,7 +536,6 @@ def delete_upload(args: DeleteUploadModel) -> Response:
     if task_access.plugin.known.uploadAllowDelete is not True:
         raise AccessDenied("Deleting uploaded files is not allowed in this task.")
     up.delete_file(u)
-    db.session.commit()
     return json_response({"deleted": up.deleted_at})
 
 

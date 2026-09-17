@@ -368,6 +368,7 @@ def delete_uploads(item: Item, older_than: int, dry_run: bool) -> None:
     cutoff = get_current_time() - timedelta(days=older_than)
     total = 0
     total_size = 0
+    failed = 0
     for d in collect_docs(item):
         uploads: Sequence[Block] = (
             run_sql(
@@ -392,14 +393,24 @@ def delete_uploads(item: Item, older_than: int, dry_run: bool) -> None:
                 size = uf.size
             except FileNotFoundError:
                 size = 0
-            total += 1
-            total_size += size
             click.echo(
                 f"{'Would delete' if dry_run else 'Deleting'} {uf.relative_filesystem_path} ({size} bytes)"
             )
             if not dry_run:
-                uf.delete_file()
+                # Each deletion is committed separately, so an interruption does not leave
+                # the database out of sync with the disk.
+                try:
+                    uf.delete_file()
+                except OSError as e:
+                    db.session.rollback()
+                    failed += 1
+                    click.echo(f"Failed to delete {uf.relative_filesystem_path}: {e}")
+                    continue
+            total += 1
+            total_size += size
     click.echo(f"Total: {total} files, {total_size / 1024 / 1024:.1f} MB")
+    if failed:
+        click.echo(f"Failed to delete {failed} files")
     commit_if_not_dry(dry_run)
 
 

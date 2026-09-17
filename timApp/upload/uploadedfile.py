@@ -357,6 +357,9 @@ class PluginUpload(UploadedFile):
         The directory of the file is kept on purpose: the running number of a new upload
         is based on the number of existing directories (see :meth:`UploadedFile.save_new`).
 
+        The deletion is committed to the database before the file is removed. This way an interruption
+        leaves at worst an orphan file on the disk, not an upload that refers to a missing file.
+
         :param deleted_by: The user who deleted the file. None if the file was deleted automatically.
         :return: True if the file was deleted, False if it had already been deleted or cannot be deleted.
         """
@@ -369,8 +372,15 @@ class PluginUpload(UploadedFile):
             db.session.add(au)
         if au.deleted_at is not None:
             return False
-        self.filesystem_path.unlink(missing_ok=True)
         au.deleted_at = get_current_time()
+        db.session.commit()
+        try:
+            self.filesystem_path.unlink(missing_ok=True)
+        except OSError:
+            # The file still exists, so the deletion can be tried again later.
+            au.deleted_at = None
+            db.session.commit()
+            raise
         log_info(
             f"{deleted_by.name if deleted_by else 'TIM'} deleted upload {self.relative_filesystem_path} "
             f"(block {self.id})"
@@ -458,11 +468,11 @@ def delete_expired_uploads() -> int:
             if up.has_forced_name:
                 # Not deletable; do not try again.
                 au.delete_after = None
+                db.session.commit()
                 was_deleted = False
             else:
+                # Commits the deletion by itself.
                 was_deleted = up.delete_file()
-            # Commit one by one so that the database stays in sync with the disk if a later deletion fails.
-            db.session.commit()
         except Exception as e:
             db.session.rollback()
             failed += 1
