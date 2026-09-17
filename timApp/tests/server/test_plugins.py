@@ -979,6 +979,86 @@ type: upload
         self.get(expiring["file"], expect_status=410)
         self.get(keep["file"])
 
+    def test_upload_forced_name_not_deleted(self):
+        """Uploads with a forced name share the file, so it is never deleted."""
+        self.login_test1()
+        d = self.create_doc(
+            initial_par="""
+#- {plugin=csPlugin #forced}
+type: upload
+uploadAllowDelete: true
+uploadRetention: 30
+        """
+        )
+        self.test_user_2.grant_access(d, AccessType.view)
+        db.session.commit()
+        path = f"/uploads/{d.id}/forced/0/0/fixed.txt"
+        # The path looks like a normal one, but two users upload to it.
+        normal_like = f"/uploads/{d.id}/forced/shared/1/fixed.txt"
+        blocks = []
+        for login, content in (
+            (self.login_test1, "first"),
+            (self.login_test2, "second"),
+        ):
+            login()
+            for name, expected in (("fixed", path), ("shared/1/fixed", normal_like)):
+                ur = self.post(
+                    f"/pluginUpload/{d.id}/forced/",
+                    query_string={"forceUploadName": name},
+                    data={"file": (io.BytesIO(content.encode()), "test.txt")},
+                )
+                self.assertEqual(expected, ur[0]["file"])
+                self.assertNotIn("deleteAfter", ur[0])
+                blocks.append(ur[0]["block"])
+            if content != "first":
+                # Another user cannot save an answer that refers to the shared path.
+                continue
+            resp = self.post_answer(
+                "csPlugin",
+                f"{d.id}.forced",
+                {
+                    "uploadedFiles": [
+                        {"path": path, "type": "text/plain"},
+                        {"path": normal_like, "type": "text/plain"},
+                    ],
+                    "type": "upload",
+                },
+            )
+            self.check_ok_answer(resp)
+
+        for login in (self.login_test1, self.login_test2):
+            login()
+            for p in (path, normal_like):
+                self.json_post(
+                    "/uploads/delete",
+                    {"path": p},
+                    expect_status=403,
+                    expect_content="Files uploaded with a forced name cannot be deleted.",
+                )
+        self.login_test1()
+        for p in (path, normal_like):
+            self.assertEqual("second", self.get(p))
+
+        for block_id in blocks:
+            au = db.session.get(AnswerUpload, block_id)
+            au.delete_after = get_current_time() - timedelta(minutes=1)
+        db.session.commit()
+        self.assertEqual(0, delete_expired_uploads())
+        for block_id in blocks:
+            au = db.session.get(AnswerUpload, block_id)
+            self.assertIsNone(au.delete_after)
+            self.assertIsNone(au.deleted_at)
+
+        result = app.test_cli_runner().invoke(
+            answer_cli,
+            ["delete-uploads", d.path, "--older-than", "0", "--no-dry-run"],
+            catch_exceptions=False,
+        )
+        self.assertIn("Total: 0 files", result.output)
+        self.assertIn(f"Skipping {d.id}/forced/0/0/fixed.txt", result.output)
+        for p in (path, normal_like):
+            self.assertEqual("second", self.get(p))
+
     def test_upload_delete_cli(self):
         self.login_test1()
         d = self.create_doc(

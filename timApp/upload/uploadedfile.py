@@ -320,8 +320,35 @@ class PluginUpload(UploadedFile):
             for access_type in (AccessType.owner, AccessType.manage)
         )
 
+    @property
+    def has_forced_name(self) -> bool:
+        """Whether the file has been uploaded with a forced name (forceUploadName) so that it cannot be deleted.
+
+        Such uploads of different users share the same path and file on the disk, so the file of
+        one upload cannot be deleted without breaking the others. The path of a normal upload is
+        unique and has the form doc_id/task_name/uploader_name/number/filename, where the numbers start from 1.
+        A forced name may have the same form, so the uniqueness of the path is checked too.
+        """
+        parts = self.relative_filesystem_path.parts
+        if len(parts) != 5 or not parts[3].isdigit() or int(parts[3]) < 1:
+            return True
+        return (
+            run_sql(
+                select(Block.id)
+                .filter(
+                    (Block.description == self.block.description)
+                    & (Block.type_id == BlockType.Upload.value)
+                    & (Block.id != self.block.id)
+                )
+                .limit(1)
+            ).first()
+            is not None
+        )
+
     def delete_file(self, deleted_by: User | None = None) -> bool:
         """Deletes the uploaded file from the disk.
+
+        The file of an upload with a forced name is never deleted (see :attr:`has_forced_name`).
 
         The database entries (Block, AnswerUpload and the answers) are kept so that it remains visible
         that the file was uploaded. The answers are not modified; the deletion time is added
@@ -331,8 +358,10 @@ class PluginUpload(UploadedFile):
         is based on the number of existing directories (see :meth:`UploadedFile.save_new`).
 
         :param deleted_by: The user who deleted the file. None if the file was deleted automatically.
-        :return: True if the file was deleted, False if it had already been deleted.
+        :return: True if the file was deleted, False if it had already been deleted or cannot be deleted.
         """
+        if self.has_forced_name:
+            return False
         au = self.answerupload
         if au is None:
             # Early uploads may not have an AnswerUpload; create one to record the deletion.
@@ -419,7 +448,11 @@ def delete_expired_uploads() -> int:
     )
     deleted = 0
     for au in expired:
-        if PluginUpload(au.block).delete_file():
+        up = PluginUpload(au.block)
+        if up.has_forced_name:
+            # Not deletable; do not try again.
+            au.delete_after = None
+        elif up.delete_file():
             deleted += 1
         # Commit one by one so that the database stays in sync with the disk if a later deletion fails.
         db.session.commit()

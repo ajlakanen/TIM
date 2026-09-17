@@ -385,6 +385,9 @@ def delete_uploads(item: Item, older_than: int, dry_run: bool) -> None:
         )
         for u in uploads:
             uf = PluginUpload(u)
+            if uf.has_forced_name:
+                click.echo(f"Skipping {uf.relative_filesystem_path} (forced name)")
+                continue
             try:
                 size = uf.size
             except FileNotFoundError:

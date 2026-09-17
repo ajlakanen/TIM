@@ -2611,7 +2611,12 @@ ${fhtml}
      * when looking at the answers of another user.
      */
     get canDeleteUploads(): boolean {
-        if (!this.markup.uploadAllowDelete || this.attrsall.preview) {
+        // Files with a forced name are shared by the uploads, so they are never deleted.
+        if (
+            !this.markup.uploadAllowDelete ||
+            this.markup.forceUploadName ||
+            this.attrsall.preview
+        ) {
             return false;
         }
         const selectedUser = this.vctrl?.selectedUser;
@@ -4362,7 +4367,7 @@ ${fhtml}
                                      (upload)="onUploadResponse($event)"
                                      (uploadDone)="onUploadDone($event)">
                 </file-select-manager>
-                <p *ngIf="markup.uploadRetention" class="small" i18n>
+                <p *ngIf="markup.uploadRetention && !markup.forceUploadName" class="small" i18n>
                     Files uploaded here are deleted automatically {{markup.uploadRetention}} days after uploading.
                 </p>
                 <div [hidden]="formulaEditor" class="form-inline small">

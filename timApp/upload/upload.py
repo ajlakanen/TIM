@@ -184,7 +184,11 @@ def set_saved_upload_delete_after(plugin: Plugin, au: AnswerUpload) -> None:
     """Replaces the short retention period of an unsaved upload with the retention period of the task.
 
     Must be called when the upload is saved in an answer for the first time.
+    Uploads with a forced name are never deleted (see PluginUpload.has_forced_name).
     """
+    if PluginUpload(au.block).has_forced_name:
+        au.delete_after = None
+        return
     au.delete_after = get_upload_delete_after(plugin, au.block.created)
 
 
@@ -271,11 +275,18 @@ def find_pluginupload(relfilename: str) -> PluginUpload:
     block = (
         run_sql(
             select(Block)
+            .outerjoin(AnswerUpload)
             .filter(
                 (Block.description.startswith(relfilename))
                 & (Block.type_id == BlockType.Upload.value)
             )
-            .order_by(Block.description.desc())
+            # Uploads with a forced name may share the description.
+            # A deleted one must not hide a newer upload whose file exists.
+            .order_by(
+                Block.description.desc(),
+                AnswerUpload.deleted_at.is_not(None),
+                Block.id,
+            )
             .limit(1)
         )
         .scalars()
@@ -426,7 +437,9 @@ def pluginupload_file(doc_id: int, task_id: str):
         ),
         forced_name=bool(force_upload_name),
     )
-    delete_after = get_upload_delete_after(p, f.block.created)
+    delete_after = (
+        None if force_upload_name else get_upload_delete_after(p, f.block.created)
+    )
     f.block.set_owner(u.get_personal_group())
     grant_access_to_session_users(f)
     if f.is_content_pdf:
@@ -479,6 +492,7 @@ def delete_upload(args: DeleteUploadModel) -> Response:
                 (Block.description == relfilename)
                 & (Block.type_id == BlockType.Upload.value)
             )
+            .order_by(Block.id.desc())
             .limit(1)
         )
         .scalars()
@@ -487,6 +501,9 @@ def delete_upload(args: DeleteUploadModel) -> Response:
     if not block:
         raise NotExist("The requested upload was not found.")
     up = PluginUpload(block)
+    if up.has_forced_name:
+        # The file is shared by all the uploads that have the same forced name.
+        raise AccessDenied("Files uploaded with a forced name cannot be deleted.")
     u = get_current_user_object()
     # Deleting is deliberately not allowed based on teacher or other rights to the document,
     # or based on the answer of the upload because the answer may belong to someone else.
