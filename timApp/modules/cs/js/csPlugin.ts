@@ -498,6 +498,8 @@ interface IUploadResponse {
     file: string;
     type: string;
     block: number;
+    // Time when the file is deleted automatically (uploadRetention)
+    deleteAfter?: string;
 }
 
 export const TemplateButton = t.intersection([
@@ -662,6 +664,8 @@ const UploadedFile = t.intersection([
     t.partial({
         // Time when the file was deleted from the server
         deleted: t.string,
+        // Time when the file is going to be deleted automatically (uploadRetention)
+        deleteAfter: t.string,
     }),
 ]);
 
@@ -768,6 +772,7 @@ const CsMarkupOptional = t.partial({
     uploadbycode: t.boolean,
     uploadautosave: t.boolean,
     uploadAllowDelete: t.boolean,
+    uploadRetention: t.number,
     uploadstem: t.string,
     userargs: t.union([t.string, t.number]),
     userinput: t.union([t.string, t.number]),
@@ -2650,7 +2655,13 @@ ${fhtml}
             this.uploadedFiles.clear();
         }
         for (const response of resps) {
-            this.uploadedFiles.push({path: response.file, type: response.type});
+            this.uploadedFiles.push({
+                path: response.file,
+                type: response.type,
+                ...(response.deleteAfter
+                    ? {deleteAfter: response.deleteAfter}
+                    : {}),
+            });
         }
 
         // Add reference to image to markdown
@@ -4351,10 +4362,14 @@ ${fhtml}
                                      (upload)="onUploadResponse($event)"
                                      (uploadDone)="onUploadDone($event)">
                 </file-select-manager>
+                <p *ngIf="markup.uploadRetention" class="small" i18n>
+                    Files uploaded here are deleted automatically {{markup.uploadRetention}} days after uploading.
+                </p>
                 <div [hidden]="formulaEditor" class="form-inline small">
                     <span *ngFor="let item of uploadedFiles">
                         <cs-upload-result [src]="item.path" [type]="item.type"
                                           [deleted]="item.deleted"
+                                          [deleteAfter]="item.deleteAfter"
                                           [allowDelete]="canDeleteUploads"
                                           (delete)="deleteUploadedFile(item)"></cs-upload-result>
                     </span>

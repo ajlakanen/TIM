@@ -338,6 +338,9 @@ def pluginupload_file(doc_id: int, task_id: str):
                 "block": f.id,
             }
         ]
+        if delete_after:
+            # Lets the plugin tell the user when the file is going to be deleted
+            returninfo[0]["deleteAfter"] = delete_after
     db.session.commit()
     return json_response(returninfo)
 

@@ -709,9 +709,13 @@ type: upload
         _, keep, _ = self.do_plugin_upload(
             d, "test", "test.txt", f"{d.id}.keep", "keep"
         )
+        self.assertNotIn("deleteAfter", keep)
         au_keep = db.session.get(AnswerUpload, keep["block"])
         self.assertIsNone(au_keep.delete_after)
         au = db.session.get(AnswerUpload, expiring["block"])
+        self.assertEqual(
+            au.delete_after, dateutil.parser.parse(expiring["deleteAfter"])
+        )
         days_left = (au.delete_after - get_current_time()).total_seconds() / 86400
         self.assertAlmostEqual(30, days_left, places=1)
 
@@ -765,14 +769,15 @@ type: upload
             expect_status=200,
         )
         mimetype = "text/plain"
-        self.assertDictEqual(
-            {
-                "file": f"/uploads/{d.id}/{task_name}/{self.current_user.name}/{expect_version}/{filename}",
-                "type": mimetype,
-                "block": ur[0]["block"],
-            },
-            ur[0],
-        )
+        expected = {
+            "file": f"/uploads/{d.id}/{task_name}/{self.current_user.name}/{expect_version}/{filename}",
+            "type": mimetype,
+            "block": ur[0]["block"],
+        }
+        # Present only in the tasks that have uploadRetention
+        if "deleteAfter" in ur[0]:
+            expected["deleteAfter"] = ur[0]["deleteAfter"]
+        self.assertDictEqual(expected, ur[0])
         self.assertIsInstance(ur[0]["block"], int)
         user_input = {
             "uploadedFile": ur[0]["file"],

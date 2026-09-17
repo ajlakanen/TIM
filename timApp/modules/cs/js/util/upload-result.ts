@@ -17,11 +17,11 @@ import {DomSanitizer} from "@angular/platform-browser";
         <p *ngIf="type_ == 'unknown'">
             Ladattu:
             <a [href]="src_" [title]="type_">{{name}}</a>
-            <ng-container *ngTemplateOutlet="deleteButton"></ng-container>
+            <ng-container *ngTemplateOutlet="deleteInfo"></ng-container>
         </p>
-        <!-- The small link is too small for the button -->
-        <p *ngIf="type_ != 'unknown' && allowDelete">
-            <ng-container *ngTemplateOutlet="deleteButton"></ng-container>
+        <!-- The small link is too small for the button and the deletion time -->
+        <p *ngIf="type_ != 'unknown' && (allowDelete || deleteAfter)">
+            <ng-container *ngTemplateOutlet="deleteInfo"></ng-container>
         </p>
         <ng-container [ngSwitch]="type_">
             <img *ngSwitchCase="'image'" [src]="src_"/>
@@ -35,7 +35,8 @@ import {DomSanitizer} from "@angular/platform-browser";
             </div>
         </ng-container>
     </ng-container>
-    <ng-template #deleteButton>
+    <ng-template #deleteInfo>
+        <ng-container *ngIf="deleteAfter" i18n>(deleted automatically on {{deleteAfter | date:'d.M.yyyy'}})</ng-container>
         <button *ngIf="allowDelete" class="btn btn-default btn-xs"
                 style="margin-left: 1em"
                 (click)="delete.emit()"
@@ -55,6 +56,8 @@ export class UploadResultComponent {
 
     /** Time when the file was deleted from the server, if it has been deleted. */
     @Input() deleted?: string;
+    /** Time when the file is going to be deleted automatically. */
+    @Input() deleteAfter?: string;
     @Input() allowDelete = false;
     @Output() delete = new EventEmitter<void>();
 
