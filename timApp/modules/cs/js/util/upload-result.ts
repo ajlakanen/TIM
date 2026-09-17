@@ -1,18 +1,27 @@
 /* eslint no-underscore-dangle: ["error", { "allow": ["type_", "src_"] }] */
-import {Component, Input} from "@angular/core";
+import {Component, EventEmitter, Input, Output} from "@angular/core";
 import type {SafeResourceUrl} from "@angular/platform-browser";
 import {DomSanitizer} from "@angular/platform-browser";
 
 @Component({
     selector: "cs-upload-result",
     template: `
-    <ng-container *ngIf="src_ && type_">
+    <p *ngIf="src_ && type_ && deleted">
+        {{name}} &ndash;
+        <ng-container i18n>file deleted {{deleted | date:'d.M.yyyy'}}</ng-container>
+    </p>
+    <ng-container *ngIf="src_ && type_ && !deleted">
         <p *ngIf="type_ != 'unknown'" class="smalllink">
             <a [href]="src_" [title]="type_">{{name}}</a>
         </p>
         <p *ngIf="type_ == 'unknown'">
             Ladattu:
             <a [href]="src_" [title]="type_">{{name}}</a>
+            <ng-container *ngTemplateOutlet="deleteButton"></ng-container>
+        </p>
+        <!-- The small link is too small for the button -->
+        <p *ngIf="type_ != 'unknown' && allowDelete">
+            <ng-container *ngTemplateOutlet="deleteButton"></ng-container>
         </p>
         <ng-container [ngSwitch]="type_">
             <img *ngSwitchCase="'image'" [src]="src_"/>
@@ -25,7 +34,15 @@ import {DomSanitizer} from "@angular/platform-browser";
                 <iframe [src]="src_" width="800" height="900"></iframe>
             </div>
         </ng-container>
-    </ng-container>`,
+    </ng-container>
+    <ng-template #deleteButton>
+        <button *ngIf="allowDelete" class="btn btn-default btn-xs"
+                style="margin-left: 1em"
+                (click)="delete.emit()"
+                title="Delete the file from the server" i18n-title>
+            <i class="glyphicon glyphicon-trash"></i>&nbsp;<ng-container i18n>Delete file</ng-container>
+        </button>
+    </ng-template>`,
 })
 export class UploadResultComponent {
     // TODO: test
@@ -35,6 +52,11 @@ export class UploadResultComponent {
     type_?: string;
     src_?: SafeResourceUrl;
     name?: string;
+
+    /** Time when the file was deleted from the server, if it has been deleted. */
+    @Input() deleted?: string;
+    @Input() allowDelete = false;
+    @Output() delete = new EventEmitter<void>();
 
     constructor(private sanitizer: DomSanitizer) {}
 

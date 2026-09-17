@@ -333,6 +333,71 @@ def pluginupload_file(doc_id: int, task_id: str):
     return json_response(returninfo)
 
 
+@dataclass
+class DeleteUploadModel:
+    path: str
+
+
+@upload.post("/uploads/delete")
+@use_model(DeleteUploadModel)
+def delete_upload(args: DeleteUploadModel) -> Response:
+    """Deletes the file of an upload. Only the user who uploaded the file can delete it,
+    and only if the task allows it (uploadAllowDelete).
+
+    The upload itself and its answers are kept; see :meth:`PluginUpload.delete_file`.
+    """
+    relfilename = args.path.removeprefix("/uploads/")
+    if check_and_format_filename(relfilename) != relfilename:
+        raise RouteException("Incorrect filename specification.")
+    block = (
+        run_sql(
+            select(Block)
+            .filter(
+                (Block.description == relfilename)
+                & (Block.type_id == BlockType.Upload.value)
+            )
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
+    if not block:
+        raise NotExist("The requested upload was not found.")
+    up = PluginUpload(block)
+    u = get_current_user_object()
+    au = up.answerupload
+    answer = au.answer if au else None
+    # Deleting is deliberately not allowed based on teacher or other rights to the document.
+    if answer:
+        is_own = u in answer.users_all
+    else:
+        is_own = u.get_personal_group() in block.owners
+    if not u.logged_in or not is_own:
+        raise AccessDenied("Only the user who uploaded the file can delete it.")
+
+    doc_id, task_name = up.relative_filesystem_path.parts[:2]
+    d = get_doc_or_abort(int(doc_id))
+    try:
+        tid = TaskId.parse(task_name, require_doc_id=False, allow_block_hint=False)
+    except PluginException:
+        raise RouteException()
+    tid.doc_id = d.id
+    # ReadOnly is enough: the file can be deleted also after answering the task is no longer possible.
+    task_access = verify_task_access(
+        d,
+        tid,
+        AccessType.view,
+        TaskIdAccess.ReadOnly,
+        user_context_with_logged_in(None),
+        default_view_ctx,
+    )
+    if task_access.plugin.known.uploadAllowDelete is not True:
+        raise AccessDenied("Deleting uploaded files is not allowed in this task.")
+    up.delete_file(u)
+    db.session.commit()
+    return json_response({"deleted": up.deleted_at})
+
+
 def simple_exif_transpose(image: Image):
     """
     Attempts to rotate an image according to exif data.

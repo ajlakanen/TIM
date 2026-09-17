@@ -642,6 +642,52 @@ type: upload
             "test2", self.get_no_warn(f"/uploads/{d.id}/testupload/testuser1/2/test.txt")
         )
 
+    def test_upload_delete_route(self):
+        """Only the uploader can delete the file, and only if the task allows it."""
+        self.login_test1()
+        d = self.create_doc(
+            initial_par="""
+#- {plugin=csPlugin #deletable}
+type: upload
+uploadAllowDelete: true
+
+#- {plugin=csPlugin #keep}
+type: upload
+        """
+        )
+        self.test_user_2.grant_access(d, AccessType.view)
+        db.session.commit()
+
+        self.login_test2()
+        for task in ("deletable", "keep"):
+            self.do_plugin_upload(d, "test", "test.txt", f"{d.id}.{task}", task)
+        deletable = f"/uploads/{d.id}/deletable/testuser2/1/test.txt"
+        keep = f"/uploads/{d.id}/keep/testuser2/1/test.txt"
+        self.json_post(
+            "/uploads/delete",
+            {"path": keep},
+            expect_status=403,
+            expect_content="Deleting uploaded files is not allowed in this task.",
+        )
+
+        # Not even the owner of the document can delete the file of another user.
+        self.login_test1()
+        self.get(deletable)
+        self.json_post(
+            "/uploads/delete",
+            {"path": deletable},
+            expect_status=403,
+            expect_content="Only the user who uploaded the file can delete it.",
+        )
+        self.get(deletable)
+
+        self.login_test2()
+        self.json_post("/uploads/delete", {"path": deletable + "x"}, expect_status=404)
+        r = self.json_post("/uploads/delete", {"path": deletable})
+        self.assertIsNotNone(r["deleted"])
+        self.get(deletable, expect_status=410)
+        self.get(keep)
+
     def do_plugin_upload(
         self, d: DocInfo, file_content, filename, task_id, task_name, expect_version=1
     ):

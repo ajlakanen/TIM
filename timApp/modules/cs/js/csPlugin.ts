@@ -54,6 +54,8 @@ import {
     valueOr,
 } from "tim/util/utils";
 import {TimDefer} from "tim/util/timdefer";
+import {Users} from "tim/user/userService";
+import {showConfirm} from "tim/ui/showConfirmDialog";
 import {AngularPluginBase} from "tim/plugin/angular-plugin-base.directive";
 import deepEqual from "deep-equal";
 import type {ITemplateParam} from "tim/ui/showTemplateReplaceDialog";
@@ -652,10 +654,16 @@ const FileSubmission = t.intersection([
 ]);
 export type IFileSubmission = t.TypeOf<typeof FileSubmission>;
 
-const UploadedFile = t.type({
-    path: t.string,
-    type: t.string,
-});
+const UploadedFile = t.intersection([
+    t.type({
+        path: t.string,
+        type: t.string,
+    }),
+    t.partial({
+        // Time when the file was deleted from the server
+        deleted: t.string,
+    }),
+]);
 
 interface IUploadedFile extends t.TypeOf<typeof UploadedFile> {}
 
@@ -759,6 +767,7 @@ const CsMarkupOptional = t.partial({
     treplace: t.string,
     uploadbycode: t.boolean,
     uploadautosave: t.boolean,
+    uploadAllowDelete: t.boolean,
     uploadstem: t.string,
     userargs: t.union([t.string, t.number]),
     userinput: t.union([t.string, t.number]),
@@ -2591,6 +2600,46 @@ ${fhtml}
         this.fileSelect?.removeFile(data.file.path);
     }
 
+    /**
+     * Whether the user can delete the uploaded files.
+     * Only the user who uploaded the file can delete it, so deleting is not available
+     * when looking at the answers of another user.
+     */
+    get canDeleteUploads(): boolean {
+        if (!this.markup.uploadAllowDelete || this.attrsall.preview) {
+            return false;
+        }
+        const selectedUser = this.vctrl?.selectedUser;
+        return (
+            Users.isLoggedIn() &&
+            (!selectedUser || selectedUser.id === Users.getCurrent().id)
+        );
+    }
+
+    async deleteUploadedFile(file: IUploadedFile) {
+        const name = this.uploadedFileName(file.path);
+        if (
+            !(await showConfirm(
+                $localize`Delete file`,
+                $localize`Delete the file ${name}:INTERPOLATION: permanently from the server? This cannot be undone.`
+            ))
+        ) {
+            return;
+        }
+        const r = await toPromise(
+            this.http.post<{deleted: string}>("/uploads/delete", {
+                path: file.path,
+            })
+        );
+        if (r.ok) {
+            file.deleted = r.result.deleted;
+            this.error = undefined;
+        } else {
+            this.error = r.result.error.error;
+        }
+        this.cdr.detectChanges();
+    }
+
     onUploadResponse(resp: unknown) {
         if (!resp) {
             return;
@@ -4304,7 +4353,10 @@ ${fhtml}
                 </file-select-manager>
                 <div [hidden]="formulaEditor" class="form-inline small">
                     <span *ngFor="let item of uploadedFiles">
-                        <cs-upload-result [src]="item.path" [type]="item.type"></cs-upload-result>
+                        <cs-upload-result [src]="item.path" [type]="item.type"
+                                          [deleted]="item.deleted"
+                                          [allowDelete]="canDeleteUploads"
+                                          (delete)="deleteUploadedFile(item)"></cs-upload-result>
                     </span>
                 </div>
             </div>
