@@ -657,6 +657,10 @@ type: upload
 type: upload
 uploadAllowDelete: true
 
+#- {plugin=csPlugin #answered}
+type: upload
+uploadAllowDelete: true
+
 #- {plugin=csPlugin #keep}
 type: upload
         """
@@ -665,10 +669,25 @@ type: upload
         db.session.commit()
 
         self.login_test2()
-        for task in ("deletable", "keep"):
+        for task in ("deletable", "answered", "keep"):
             self.do_plugin_upload(d, "test", "test.txt", f"{d.id}.{task}", task)
         deletable = f"/uploads/{d.id}/deletable/testuser2/1/test.txt"
+        answered = f"/uploads/{d.id}/answered/testuser2/1/test.txt"
         keep = f"/uploads/{d.id}/keep/testuser2/1/test.txt"
+        # The uploader is resolved from the answer if the upload has been associated with one.
+        resp = self.post_answer(
+            "csPlugin",
+            f"{d.id}.answered",
+            {
+                "uploadedFiles": [{"path": answered, "type": "text/plain"}],
+                "type": "upload",
+            },
+        )
+        self.check_ok_answer(resp)
+        au = run_sql(
+            select(AnswerUpload).filter_by(answer_id=resp["savedNew"])
+        ).scalar_one()
+        self.assertEqual(answered, f"/uploads/{au.block.description}")
         self.json_post(
             "/uploads/delete",
             {"path": keep},
@@ -678,20 +697,33 @@ type: upload
 
         # Not even the owner of the document can delete the file of another user.
         self.login_test1()
-        self.get(deletable)
-        self.json_post(
-            "/uploads/delete",
-            {"path": deletable},
-            expect_status=403,
-            expect_content="Only the user who uploaded the file can delete it.",
-        )
-        self.get(deletable)
+        for path in (deletable, answered):
+            self.get(path)
+            self.json_post(
+                "/uploads/delete",
+                {"path": path},
+                expect_status=403,
+                expect_content="Only the user who uploaded the file can delete it.",
+            )
+            self.get(path)
+
+        # Neither can a user who is not logged in.
+        self.logout()
+        for path in (deletable, answered):
+            self.json_post(
+                "/uploads/delete",
+                {"path": path},
+                expect_status=403,
+                expect_content="Only the user who uploaded the file can delete it.",
+            )
 
         self.login_test2()
         self.json_post("/uploads/delete", {"path": deletable + "x"}, expect_status=404)
-        r = self.json_post("/uploads/delete", {"path": deletable})
-        self.assertIsNotNone(r["deleted"])
-        self.get(deletable, expect_status=410)
+        for path in (deletable, answered):
+            self.get(path)
+            r = self.json_post("/uploads/delete", {"path": path})
+            self.assertIsNotNone(r["deleted"])
+            self.get(path, expect_status=410)
         self.get(keep)
 
     def test_upload_retention(self):
