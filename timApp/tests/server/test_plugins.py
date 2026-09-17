@@ -35,7 +35,11 @@ from timApp.tests.db.timdbtest import (
 from timApp.tests.server.timroutetest import TimRouteTest
 from timApp.tim_app import app
 from timApp.timdb.sqa import db, run_sql
-from timApp.upload.uploadedfile import PluginUpload, delete_expired_uploads
+from timApp.upload.uploadedfile import (
+    PluginUpload,
+    delete_expired_uploads,
+    add_upload_deletion_times,
+)
 from timApp.user.special_group_names import ANONYMOUS_USERNAME
 from timApp.user.user import User
 from timApp.user.usergroup import UserGroup
@@ -629,13 +633,33 @@ type: upload
         self.assertEqual(2, len(answers))
         up = PluginUpload(db.session.get(Block, ur["block"]))
         deleted_at = up.deleted_at.isoformat()
+        # The saved answers are not modified.
         self.assertEqual(
-            deleted_at, json.loads(answers[0].content)["uploadedFileDeleted"]
+            {"uploadedFile": url, "uploadedType": "text/plain"},
+            json.loads(answers[0].content),
         )
         self.assertEqual(
-            [{"path": url, "type": "text/plain", "deleted": deleted_at}],
+            [{"path": url, "type": "text/plain"}],
             json.loads(answers[1].content)["uploadedFiles"],
         )
+        # The deletion time is added to the state that is sent to the plugin,
+        # also for the older answers that refer to a single file only.
+        deleted_files = [{"path": url, "type": "text/plain", "deleted": deleted_at}]
+        for a in answers:
+            state = a.content_as_json
+            add_upload_deletion_times(state)
+            self.assertEqual(deleted_files, state["uploadedFiles"])
+            r = self.get(
+                "/getState",
+                query_string={
+                    "user_id": self.current_user_id(),
+                    "answer_id": a.id,
+                    "par_id": d.document.get_paragraphs()[0].get_id(),
+                    "doc_id": d.id,
+                },
+            )
+            plugin_json = self.get_plugin_json(html.fromstring(r["html"]))
+            self.assertEqual(deleted_files, plugin_json["uploadedFiles"])
 
         # The answer report must not break because of the deleted file.
         self.assertIn("was deleted on", self.get(f"/allAnswersPlain/{task_id}"))

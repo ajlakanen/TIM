@@ -8,6 +8,7 @@ from timApp.tests.browser.browsertest import (
     BrowserTest,
 )
 from timApp.timdb.sqa import db
+from timApp.upload.uploadedfile import PluginUpload
 
 
 class ReviewcanvasTest(BrowserTest):
@@ -81,3 +82,42 @@ class ReviewcanvasTest(BrowserTest):
             data={"file": (io.BytesIO(b"GIF87a"), "a.jpeg")},
             expect_status=400,
         )
+
+    def test_deleted_upload(self):
+        """The state of an answer is loaded even if its upload has been deleted."""
+        self.login_test1()
+        d = self.create_doc(
+            initial_par="""
+``` {#rc plugin="reviewcanvas"}
+```
+                            """
+        )
+        with open("tests/a.png", "rb") as file:
+            file_content = file.read()
+        ur = self.post(
+            f"/pluginUpload/{d.id}/rc/",
+            data={"file": (io.BytesIO(file_content), "a.png")},
+            expect_status=200,
+        )
+        user_input = {
+            "uploadedFiles": [
+                {"path": ur[0]["file"], "rotation": 0, "type": "image/png"}
+            ]
+        }
+        resp = self.post_answer("reviewcanvas", f"{d.id}.rc", user_input)
+        self.assertTrue(
+            PluginUpload(db.session.get(Block, ur[0]["block"])).delete_file()
+        )
+        db.session.commit()
+        r = self.get(
+            "/getState",
+            query_string={
+                "user_id": self.current_user_id(),
+                "answer_id": resp["savedNew"],
+                "par_id": d.document.get_paragraphs()[0].get_id(),
+                "doc_id": d.id,
+            },
+        )
+        self.assertIn("<reviewcanvas-runner", r["html"])
+        self.assertNotIn("pluginError", r["html"])
+        self.get(ur[0]["file"], expect_status=410)

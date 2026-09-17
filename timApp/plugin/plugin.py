@@ -36,6 +36,7 @@ from timApp.timdb.exceptions import TimDbException
 from timApp.timdb.sqa import run_sql
 from timApp.user.user import User
 from timApp.util.rndutils import myhash, SeedClass
+from timApp.upload.uploadedfile import add_upload_deletion_times
 from timApp.util.utils import try_load_json, get_current_time, Range
 from tim_common.markupmodels import PointsRule, KnownMarkupFields
 from tim_common.marshmallow_dataclass import class_schema
@@ -98,6 +99,10 @@ PLUGIN_MAX_POINTS_COUNTER: dict[str, Callable[[dict, bool], str | None]] = {
 }
 
 ALLOW_STYLES_PLUGINS = {"textfield", "numericfield", "drag", "dropdown", "qst"}
+
+# Plugins that accept the deletion time of an upload in their state (see add_upload_deletion_times).
+# Other plugins may validate the state strictly, so they get the state as it was saved.
+UPLOAD_DELETION_AWARE_PLUGINS = {"csPlugin"}
 
 WANT_FIELDS = {"csPlugin"}
 
@@ -458,6 +463,8 @@ class Plugin:
                 state = {self.ptype.get_content_field_name(): p}
             else:
                 state = try_load_json(self.answer.content)
+                if self.type in UPLOAD_DELETION_AWARE_PLUGINS:
+                    add_upload_deletion_times(state)
             # if isinstance(state, dict) and options.user is not None:
             if user.logged_in:
                 info = self.get_info(

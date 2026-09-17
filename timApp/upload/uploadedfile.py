@@ -1,9 +1,8 @@
-import json
 import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, NamedTuple, Union
+from typing import Any, Optional, NamedTuple, Union
 
 import magic
 from sqlalchemy import select, Select
@@ -311,7 +310,8 @@ class PluginUpload(UploadedFile):
         """Deletes the uploaded file from the disk.
 
         The database entries (Block, AnswerUpload and the answers) are kept so that it remains visible
-        that the file was uploaded. The answers that refer to the file are marked with the deletion time.
+        that the file was uploaded. The answers are not modified; the deletion time is added
+        to the state of an answer when it is sent to the plugin (see :func:`add_upload_deletion_times`).
 
         The directory of the file is kept on purpose: the running number of a new upload
         is based on the number of existing directories (see :meth:`UploadedFile.save_new`).
@@ -328,52 +328,64 @@ class PluginUpload(UploadedFile):
             return False
         self.filesystem_path.unlink(missing_ok=True)
         au.deleted_at = get_current_time()
-        self._mark_deleted_in_answers(au.deleted_at)
         log_info(
             f"{deleted_by.name if deleted_by else 'TIM'} deleted upload {self.relative_filesystem_path} "
             f"(block {self.id})"
         )
         return True
 
-    def _mark_deleted_in_answers(self, deleted_at: datetime) -> None:
-        from timApp.answer.answer import Answer
 
-        parts = self.relative_filesystem_path.parts
-        if len(parts) < 2:
-            return
-        url_path = self.url_path
-        answers = (
-            run_sql(
-                select(Answer).filter(
-                    (Answer.task_id == f"{parts[0]}.{parts[1]}")
-                    # The path is matched as it appears in the JSON content
-                    & Answer.content.contains(
-                        json.dumps(url_path)[1:-1], autoescape=True
-                    )
-                )
+def add_upload_deletion_times(state: Any) -> None:
+    """Marks the deleted uploads in the state of an answer that is about to be sent to a plugin.
+
+    The deletion time is not saved in the answers; it is always taken from :class:`AnswerUpload`.
+    The plugin must accept the field "deleted" in the items of uploadedFiles.
+
+    :param state: The content of the answer. Modified in place.
+    """
+    if not isinstance(state, dict):
+        return
+    prefix = "/uploads/"
+    files = state.get("uploadedFiles")
+    files = [
+        f
+        for f in (files if isinstance(files, list) else [])
+        if isinstance(f, dict) and isinstance(f.get("path"), str)
+    ]
+    # Older answers refer to a single file only
+    old_file = state.get("uploadedFile")
+    if not isinstance(old_file, str):
+        old_file = None
+    paths = {f["path"] for f in files}
+    if old_file:
+        paths.add(old_file)
+    rel_paths = [p[len(prefix) :] for p in paths if p.startswith(prefix)]
+    if not rel_paths:
+        return
+    deleted = {
+        prefix + path: deleted_at
+        for path, deleted_at in run_sql(
+            select(Block.description, AnswerUpload.deleted_at)
+            .join(AnswerUpload, AnswerUpload.upload_block_id == Block.id)
+            .filter(
+                Block.description.in_(rel_paths)
+                & (Block.type_id == BlockType.Upload.value)
+                & (AnswerUpload.deleted_at != None)
             )
-            .scalars()
-            .all()
         )
-        for a in answers:
-            try:
-                content = json.loads(a.content)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(content, dict):
-                continue
-            changed = False
-            files = content.get("uploadedFiles")
-            for f in files if isinstance(files, list) else []:
-                if isinstance(f, dict) and f.get("path") == url_path:
-                    f["deleted"] = deleted_at.isoformat()
-                    changed = True
-            # Older answers refer to a single file only
-            if content.get("uploadedFile") == url_path:
-                content["uploadedFileDeleted"] = deleted_at.isoformat()
-                changed = True
-            if changed:
-                a.content = json.dumps(content)
+    }
+    for f in files:
+        deleted_at = deleted.get(f["path"])
+        if deleted_at:
+            f["deleted"] = deleted_at.isoformat()
+    if old_file in deleted and not files:
+        state["uploadedFiles"] = [
+            {
+                "path": old_file,
+                "type": state.get("uploadedType", ""),
+                "deleted": deleted[old_file].isoformat(),
+            }
+        ]
 
 
 def delete_expired_uploads() -> int:
