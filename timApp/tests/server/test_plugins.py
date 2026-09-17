@@ -979,6 +979,27 @@ type: upload
         self.get(expiring["file"], expect_status=410)
         self.get(keep["file"])
 
+    def test_upload_retention_invalid(self):
+        """Only a positive integer is a retention period; the uploads of other tasks are kept."""
+        self.login_test1()
+        values = {"bool": "true", "negative": "-5", "zero": "0", "null": "null"}
+        d = self.create_doc(
+            initial_par="".join(
+                f"""
+#- {{plugin=csPlugin #{task}}}
+type: upload
+uploadRetention: {value}
+"""
+                for task, value in values.items()
+            )
+        )
+        for task in values:
+            _, ur, _ = self.do_plugin_upload(
+                d, "test", "test.txt", f"{d.id}.{task}", task
+            )
+            self.assertNotIn("deleteAfter", ur)
+            self.assertIsNone(db.session.get(AnswerUpload, ur["block"]).delete_after)
+
     def test_upload_retention_failure(self):
         """An upload whose deletion fails does not prevent deleting the other expired uploads."""
         self.login_test1()

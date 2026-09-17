@@ -175,7 +175,12 @@ def get_upload_delete_after(plugin: Plugin, uploaded: datetime) -> datetime | No
     :return: The deletion time, or None if the task keeps the uploads indefinitely.
     """
     retention_days = plugin.known.uploadRetention
-    if isinstance(retention_days, int) and retention_days > 0:
+    # The markup model accepts a boolean as an integer; csPlugin interprets the value the same way.
+    if (
+        isinstance(retention_days, int)
+        and not isinstance(retention_days, bool)
+        and retention_days > 0
+    ):
         return uploaded + timedelta(days=retention_days)
     return None
 

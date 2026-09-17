@@ -11593,8 +11593,8 @@ Separate multiple addresses with commas or write each address on a new line.</so
         </context-group>
       </trans-unit>
       <trans-unit id="7778472922316170385" datatype="html">
-        <source> Files uploaded here are deleted automatically <x id="INTERPOLATION" equiv-text="{{markup.uploadRetention}}"/> days after uploading. </source>
-        <target state="translated"> Los archivos subidos aquí se eliminan automáticamente <x id="INTERPOLATION" equiv-text="{{markup.uploadRetention}}"/> días después de la subida. </target>
+        <source> Files uploaded here are deleted automatically <x id="INTERPOLATION" equiv-text="{{uploadRetentionDays}}"/> days after uploading. </source>
+        <target state="translated"> Los archivos subidos aquí se eliminan automáticamente <x id="INTERPOLATION" equiv-text="{{uploadRetentionDays}}"/> días después de la subida. </target>
         <context-group purpose="location">
           <context context-type="sourcefile">modules/cs/js/csPlugin.ts</context>
           <context context-type="linenumber">4366,4367</context>

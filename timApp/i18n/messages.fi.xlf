@@ -11584,8 +11584,8 @@ Syötä useiden käyttäjien osoitteet allekkain tai pilkulla erotettuina.</targ
         </context-group>
       </trans-unit>
       <trans-unit id="7778472922316170385" datatype="html">
-        <source> Files uploaded here are deleted automatically <x id="INTERPOLATION" equiv-text="{{markup.uploadRetention}}"/> days after uploading. </source>
-        <target state="translated"> Tähän ladatut tiedostot poistetaan automaattisesti <x id="INTERPOLATION" equiv-text="{{markup.uploadRetention}}"/> päivän kuluttua lataamisesta. </target>
+        <source> Files uploaded here are deleted automatically <x id="INTERPOLATION" equiv-text="{{uploadRetentionDays}}"/> days after uploading. </source>
+        <target state="translated"> Tähän ladatut tiedostot poistetaan automaattisesti <x id="INTERPOLATION" equiv-text="{{uploadRetentionDays}}"/> päivän kuluttua lataamisesta. </target>
         <context-group purpose="location">
           <context context-type="sourcefile">modules/cs/js/csPlugin.ts</context>
           <context context-type="linenumber">4366,4367</context>

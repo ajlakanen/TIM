@@ -772,7 +772,7 @@ const CsMarkupOptional = t.partial({
     uploadbycode: t.boolean,
     uploadautosave: t.boolean,
     uploadAllowDelete: t.boolean,
-    uploadRetention: t.number,
+    uploadRetention: nullable(t.number),
     uploadstem: t.string,
     userargs: t.union([t.string, t.number]),
     userinput: t.union([t.string, t.number]),
@@ -2606,6 +2606,24 @@ ${fhtml}
     }
 
     /**
+     * The retention period of the uploads (uploadRetention) in days, or undefined if the files are not deleted
+     * automatically. The value is interpreted the same way as in the server (get_upload_delete_after).
+     */
+    get uploadRetentionDays(): number | undefined {
+        const days = this.markup.uploadRetention;
+        // Files with a forced name are shared by the uploads, so they are never deleted.
+        if (
+            this.markup.forceUploadName ||
+            typeof days !== "number" ||
+            !Number.isInteger(days) ||
+            days <= 0
+        ) {
+            return undefined;
+        }
+        return days;
+    }
+
+    /**
      * Whether the user can delete the uploaded files.
      * Only the user who uploaded the file can delete it, so deleting is not available
      * when looking at the answers of another user.
@@ -4369,8 +4387,8 @@ ${fhtml}
                                      (upload)="onUploadResponse($event)"
                                      (uploadDone)="onUploadDone($event)">
                 </file-select-manager>
-                <p *ngIf="markup.uploadRetention && !markup.forceUploadName" class="small" i18n>
-                    Files uploaded here are deleted automatically {{markup.uploadRetention}} days after uploading.
+                <p *ngIf="uploadRetentionDays" class="small" i18n>
+                    Files uploaded here are deleted automatically {{uploadRetentionDays}} days after uploading.
                 </p>
                 <div [hidden]="formulaEditor" class="form-inline small">
                     <span *ngFor="let item of uploadedFiles">
