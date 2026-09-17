@@ -206,7 +206,11 @@ class UploadSource(FileSource):
         path = Path(file.source[len("upload:") :])
 
         if not path.is_file():
-            raise ValueError("Upload source file not found")
+            # The file may have been deleted (uploadRetention) while the task was open
+            raise ValueError(
+                f"The uploaded file {file.path} was not found. "
+                f"It may have been deleted. Upload the file again."
+            )
 
         if cls.verified is None or str(path) not in cls.verified:
             raise PermissionError(

@@ -2898,13 +2898,15 @@ ${fhtml}
                     this.uploadByCodeFiles.find((f2) => f2.path == f.path)
                 )
                 .map((f) => ({source: "uploadByCode", ...f})) ?? [];
-        const uploadedFiles: IFileSubmission[] = this.uploadedFiles
+        // The deleted files stay in the list only to show that they have been deleted.
+        const existingUploads = this.uploadedFiles
             .toArray()
-            .map((f) => ({
-                source: "upload:" + f.path,
-                path: this.uploadedFileName(f.path),
-                type: f.type,
-            }));
+            .filter((f) => !f.deleted);
+        const uploadedFiles: IFileSubmission[] = existingUploads.map((f) => ({
+            source: "upload:" + f.path,
+            path: this.uploadedFileName(f.path),
+            type: f.type,
+        }));
         const externalFiles = this.externalFiles ?? [];
 
         let allFiles: IFileSubmission[] = editorFiles
@@ -2965,7 +2967,7 @@ ${fhtml}
                 userinput: this.userinput || "",
                 isInput: isInput,
                 userargs: this.userargs || "",
-                uploadedFiles: this.uploadedFiles.toArray(),
+                uploadedFiles: existingUploads,
                 nosave: nosave || this.nosave,
                 type: runType,
                 ...extraMarkUp,
