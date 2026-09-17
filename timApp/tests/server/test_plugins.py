@@ -10,6 +10,7 @@ from lxml import html
 from lxml.html import HtmlElement
 from sqlalchemy import select, func
 
+from timApp.admin.answer_cli import answer_cli
 from timApp.answer.answer import Answer
 from timApp.answer.answer_models import AnswerUpload
 from timApp.answer.answers import get_points_by_rule, save_answer, set_test_datetime
@@ -32,6 +33,7 @@ from timApp.tests.db.timdbtest import (
     TEST_USER_2_USERNAME,
 )
 from timApp.tests.server.timroutetest import TimRouteTest
+from timApp.tim_app import app
 from timApp.timdb.sqa import db, run_sql
 from timApp.upload.uploadedfile import PluginUpload, delete_expired_uploads
 from timApp.user.special_group_names import ANONYMOUS_USERNAME
@@ -723,6 +725,34 @@ type: upload
         self.assertEqual(0, delete_expired_uploads())
         self.get(expiring["file"], expect_status=410)
         self.get(keep["file"])
+
+    def test_upload_delete_cli(self):
+        self.login_test1()
+        d = self.create_doc(
+            initial_par="""
+#- {plugin=csPlugin #testupload}
+type: upload
+        """
+        )
+        _, ur, _ = self.do_plugin_upload(
+            d, "test", "test.txt", f"{d.id}.testupload", "testupload"
+        )
+        runner = app.test_cli_runner()
+
+        def run_delete(*args: str) -> str:
+            result = runner.invoke(
+                answer_cli, ["delete-uploads", d.path, *args], catch_exceptions=False
+            )
+            self.assertEqual(0, result.exit_code, result.output)
+            return result.output
+
+        self.assertIn("Total: 0 files", run_delete("--older-than", "1", "--no-dry-run"))
+        # Dry run is the default.
+        self.assertIn("Total: 1 files", run_delete("--older-than", "0"))
+        self.get(ur["file"])
+        self.assertIn("Total: 1 files", run_delete("--older-than", "0", "--no-dry-run"))
+        self.get(ur["file"], expect_status=410)
+        self.assertIn("Total: 0 files", run_delete("--older-than", "0", "--no-dry-run"))
 
     def do_plugin_upload(
         self, d: DocInfo, file_content, filename, task_id, task_name, expect_version=1

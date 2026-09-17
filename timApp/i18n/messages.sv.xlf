@@ -11453,6 +11453,42 @@ Mata in flera användares adresser på separata rader eller åtskilda med kommat
           <context context-type="linenumber">313,312</context>
         </context-group>
       </trans-unit>
+      <trans-unit id="6693349469471580292" datatype="html">
+        <source>Delete file</source>
+        <target state="new">Delete file</target>
+        <context-group purpose="location">
+          <context context-type="sourcefile">modules/cs/js/csPlugin.ts</context>
+          <context context-type="linenumber">2623,2622</context>
+        </context-group>
+        <context-group purpose="location">
+          <context context-type="sourcefile">modules/cs/js/util/upload-result.ts</context>
+          <context context-type="linenumber">43</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="156928157032952484" datatype="html">
+        <source>Delete the file <x id="INTERPOLATION" equiv-text="name"/> permanently from the server? This cannot be undone.</source>
+        <target state="new">Delete the file <x id="INTERPOLATION" equiv-text="name"/> permanently from the server? This cannot be undone.</target>
+        <context-group purpose="location">
+          <context context-type="sourcefile">modules/cs/js/csPlugin.ts</context>
+          <context context-type="linenumber">2624,2622</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="3439722930939043426" datatype="html">
+        <source>file deleted <x id="INTERPOLATION" equiv-text="{{deleted | date:&apos;d.M.yyyy&apos;}}"/></source>
+        <target state="new">file deleted <x id="INTERPOLATION" equiv-text="{{deleted | date:&apos;d.M.yyyy&apos;}}"/></target>
+        <context-group purpose="location">
+          <context context-type="sourcefile">modules/cs/js/util/upload-result.ts</context>
+          <context context-type="linenumber">11</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="3164626434961459040" datatype="html">
+        <source>Delete the file from the server</source>
+        <target state="new">Delete the file from the server</target>
+        <context-group purpose="location">
+          <context context-type="sourcefile">modules/cs/js/util/upload-result.ts</context>
+          <context context-type="linenumber">42</context>
+        </context-group>
+      </trans-unit>
     </body>
   </file>
 </xliff>

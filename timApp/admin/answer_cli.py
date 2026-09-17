@@ -1,7 +1,7 @@
 import json
 import sys
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Sequence
 
 import click
@@ -17,13 +17,14 @@ from timApp.answer.answer_models import UserAnswer, AnswerUpload
 from timApp.answer.answers import valid_answers_query
 from timApp.document.docinfo import DocInfo
 from timApp.folder.folder import Folder
-from timApp.item.block import Block
+from timApp.item.block import Block, BlockType
 from timApp.item.item import Item
 from timApp.plugin.taskid import TaskId
 from timApp.timdb.sqa import db, run_sql
 from timApp.upload.uploadedfile import PluginUpload
 from timApp.user.user import User
 from timApp.user.usergroup import UserGroup
+from timApp.util.utils import get_current_time
 from timApp.util.pdftools import (
     is_pdf_producer_ghostscript,
     compress_pdf,
@@ -348,6 +349,55 @@ def compress_uploads(item: Item, dry_run: bool) -> None:
                     click.echo(
                         f"done, size: {old_size} -> {new_size} (reduced by {percent}%)"
                     )
+
+
+@answer_cli.command()
+@click.argument("item", type=TimItemType())
+@click.option(
+    "--older-than",
+    type=int,
+    required=True,
+    help="Delete the files that were uploaded more than this many days ago",
+)
+@click.option("--dry-run/--no-dry-run", default=True)
+def delete_uploads(item: Item, older_than: int, dry_run: bool) -> None:
+    """Deletes the files of the plugin uploads in a document or a folder.
+
+    The uploads and their answers are kept; only the files are removed from the disk.
+    """
+    cutoff = get_current_time() - timedelta(days=older_than)
+    total = 0
+    total_size = 0
+    for d in collect_docs(item):
+        uploads: Sequence[Block] = (
+            run_sql(
+                select(Block)
+                .outerjoin(AnswerUpload)
+                .filter(
+                    (Block.type_id == BlockType.Upload.value)
+                    & Block.description.startswith(f"{d.id}/", autoescape=True)
+                    & (Block.created < cutoff)
+                    & (AnswerUpload.deleted_at == None)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for u in uploads:
+            uf = PluginUpload(u)
+            try:
+                size = uf.size
+            except FileNotFoundError:
+                size = 0
+            total += 1
+            total_size += size
+            click.echo(
+                f"{'Would delete' if dry_run else 'Deleting'} {uf.relative_filesystem_path} ({size} bytes)"
+            )
+            if not dry_run:
+                uf.delete_file()
+    click.echo(f"Total: {total} files, {total_size / 1024 / 1024:.1f} MB")
+    commit_if_not_dry(dry_run)
 
 
 def collect_docs(item: Item) -> Sequence[DocInfo]:
