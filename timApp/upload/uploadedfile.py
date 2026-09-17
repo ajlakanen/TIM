@@ -36,6 +36,8 @@ class PluginUploadInfo(NamedTuple):
     task_id_name: str
     doc: DocInfo
     user: User
+    delete_after: datetime | None = None
+    """When the file can be deleted automatically. None if the file is kept indefinitely."""
 
 
 def get_storage_path(block_type: BlockType):
@@ -253,6 +255,7 @@ class UploadedFile(ItemBase):
                 description=path.relative_to(base_path).as_posix(),
             )
             au = AnswerUpload(block=file_block)
+            au.delete_after = upload_info.delete_after
             db.session.add(au)
         else:
             file_block = insert_block(block_type=block_type, description=secured_name)
@@ -371,6 +374,30 @@ class PluginUpload(UploadedFile):
                 changed = True
             if changed:
                 a.content = json.dumps(content)
+
+
+def delete_expired_uploads() -> int:
+    """Deletes the files of the uploads whose retention period (uploadRetention) has ended.
+
+    :return: The number of deleted files.
+    """
+    expired = (
+        run_sql(
+            select(AnswerUpload).filter(
+                (AnswerUpload.delete_after < get_current_time())
+                & (AnswerUpload.deleted_at == None)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    deleted = 0
+    for au in expired:
+        if PluginUpload(au.block).delete_file():
+            deleted += 1
+        # Commit one by one so that the database stays in sync with the disk if a later deletion fails.
+        db.session.commit()
+    return deleted
 
 
 CLASS_MAPPING = {

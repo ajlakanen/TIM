@@ -33,7 +33,7 @@ from timApp.tests.db.timdbtest import (
 )
 from timApp.tests.server.timroutetest import TimRouteTest
 from timApp.timdb.sqa import db, run_sql
-from timApp.upload.uploadedfile import PluginUpload
+from timApp.upload.uploadedfile import PluginUpload, delete_expired_uploads
 from timApp.user.special_group_names import ANONYMOUS_USERNAME
 from timApp.user.user import User
 from timApp.user.usergroup import UserGroup
@@ -687,6 +687,42 @@ type: upload
         self.assertIsNotNone(r["deleted"])
         self.get(deletable, expect_status=410)
         self.get(keep)
+
+    def test_upload_retention(self):
+        """Uploads of a task with uploadRetention are deleted after the retention period."""
+        self.login_test1()
+        d = self.create_doc(
+            initial_par="""
+#- {plugin=csPlugin #expiring}
+type: upload
+uploadRetention: 30
+
+#- {plugin=csPlugin #keep}
+type: upload
+        """
+        )
+        _, expiring, _ = self.do_plugin_upload(
+            d, "test", "test.txt", f"{d.id}.expiring", "expiring"
+        )
+        _, keep, _ = self.do_plugin_upload(
+            d, "test", "test.txt", f"{d.id}.keep", "keep"
+        )
+        au_keep = db.session.get(AnswerUpload, keep["block"])
+        self.assertIsNone(au_keep.delete_after)
+        au = db.session.get(AnswerUpload, expiring["block"])
+        days_left = (au.delete_after - get_current_time()).total_seconds() / 86400
+        self.assertAlmostEqual(30, days_left, places=1)
+
+        self.assertEqual(0, delete_expired_uploads())
+        self.get(expiring["file"])
+
+        au = db.session.get(AnswerUpload, expiring["block"])
+        au.delete_after = get_current_time() - timedelta(minutes=1)
+        db.session.commit()
+        self.assertEqual(1, delete_expired_uploads())
+        self.assertEqual(0, delete_expired_uploads())
+        self.get(expiring["file"], expect_status=410)
+        self.get(keep["file"])
 
     def do_plugin_upload(
         self, d: DocInfo, file_content, filename, task_id, task_name, expect_version=1

@@ -4,6 +4,7 @@ import os
 import posixpath
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from hashlib import sha1
 from pathlib import Path, PurePosixPath
 from urllib.parse import unquote, urlparse
@@ -70,6 +71,7 @@ from timApp.util.flask.responsehelper import (
     add_csp_header,
     safe_redirect,
 )
+from timApp.util.utils import get_current_time
 from timApp.util.pdftools import (
     StampDataInvalidError,
     default_stamp_format,
@@ -301,11 +303,19 @@ def pluginupload_file(doc_id: int, task_id: str):
             filename += f"_{force_index}"
         filename += file_extension
 
+    p = task_access.plugin
+    delete_after = None
+    retention_days = p.known.uploadRetention
+    if isinstance(retention_days, int) and retention_days > 0:
+        delete_after = get_current_time() + timedelta(days=retention_days)
+
     f = UploadedFile.save_new(
         filename,
         BlockType.Upload,
         file_data=content,
-        upload_info=PluginUploadInfo(task_id_name=task_id, user=u, doc=d),
+        upload_info=PluginUploadInfo(
+            task_id_name=task_id, user=u, doc=d, delete_after=delete_after
+        ),
         forced_name=bool(force_upload_name),
     )
     f.block.set_owner(u.get_personal_group())
@@ -318,9 +328,8 @@ def pluginupload_file(doc_id: int, task_id: str):
                 f"Failed to post-process {f.filesystem_path.name}. "
                 f"Please make sure the PDF is not broken."
             )
-    p = task_access.plugin
     if p.type == "reviewcanvas":
-        returninfo = convert_pdf_or_compress_image(f, u, d, task_id)
+        returninfo = convert_pdf_or_compress_image(f, u, d, task_id, delete_after)
     else:
         returninfo = [
             {
@@ -451,7 +460,13 @@ def _downsample_image_canvas(img_path: Path) -> None:
         img.save(img_path, format=img_format)
 
 
-def convert_pdf_or_compress_image(f: UploadedFile, u: User, d: DocInfo, task_id: str):
+def convert_pdf_or_compress_image(
+    f: UploadedFile,
+    u: User,
+    d: DocInfo,
+    task_id: str,
+    delete_after: datetime | None = None,
+):
     p = f.filesystem_path
     returninfo = []
     if f.content_mimetype.startswith("image/"):
@@ -509,7 +524,9 @@ def convert_pdf_or_compress_image(f: UploadedFile, u: User, d: DocInfo, task_id:
                 imagepath,
                 BlockType.Upload,
                 original_file=file,
-                upload_info=PluginUploadInfo(task_id_name=task_id, user=u, doc=d),
+                upload_info=PluginUploadInfo(
+                    task_id_name=task_id, user=u, doc=d, delete_after=delete_after
+                ),
             )
             uf.block.set_owner(u.get_personal_group())
             grant_access_to_session_users(uf)

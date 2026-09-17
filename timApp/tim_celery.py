@@ -301,6 +301,18 @@ def cleanup_verifications():
 
 
 @celery.task(ignore_result=True)
+def cleanup_expired_uploads():
+    """
+    Delete the files of the plugin uploads whose retention period (uploadRetention) has ended.
+    """
+    from timApp.upload.uploadedfile import delete_expired_uploads
+
+    deleted = delete_expired_uploads()
+    if deleted:
+        logger.info(f"Deleted {deleted} expired uploads")
+
+
+@celery.task(ignore_result=True)
 def cleanup_oauth2_tokens():
     """
     Remove expired OAuth2 tokens.

@@ -127,6 +127,10 @@ CELERYBEAT_SCHEDULE = {
         "task": "timApp.tim_celery.cleanup_oauth2_tokens",
         "schedule": crontab(hour="*/24", minute="0"),
     },
+    "cleanup-expired-uploads": {
+        "task": "timApp.tim_celery.cleanup_expired_uploads",
+        "schedule": crontab(hour="3", minute="30"),
+    },
     "cleanup-verifications": {
         "task": "timApp.tim_celery.cleanup_verifications",
         "schedule": crontab(minute="*/10"),

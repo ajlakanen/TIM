@@ -213,6 +213,7 @@ class KnownMarkupFields(HiddenFieldsMixin):
     stem: str | None | Missing = missing
     triesText: str | None | Missing = missing
     uploadAllowDelete: bool | None | Missing = missing
+    uploadRetention: int | None | Missing = missing
     useCurrentUser: bool | None | Missing = missing
     texafterprint: str | None | Missing = missing
     texbeforeprint: str | None | Missing = missing
