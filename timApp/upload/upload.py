@@ -36,7 +36,11 @@ from timApp.auth.oauth2.models import Scope
 from timApp.auth.oauth2.oauth2 import require_oauth
 from authlib.integrations.flask_oauth2 import current_token
 from timApp.auth.sessioninfo import get_current_user_object, user_context_with_logged_in
-from timApp.auth.sessioninfo import logged_in, get_current_user_group_object
+from timApp.auth.sessioninfo import (
+    logged_in,
+    get_current_user_group_object,
+    get_session_users_objs,
+)
 from timApp.document.docentry import DocEntry
 from timApp.document.docinfo import DocInfo
 from timApp.document.documents import import_document
@@ -460,8 +464,8 @@ class DeleteUploadModel:
 @upload.post("/uploads/delete")
 @use_model(DeleteUploadModel)
 def delete_upload(args: DeleteUploadModel) -> Response:
-    """Deletes the file of an upload. Only the user who uploaded the file can delete it,
-    and only if the task allows it (uploadAllowDelete).
+    """Deletes the file of an upload. Only the users who uploaded the file can delete it,
+    and only if the task allows it (uploadAllowDelete). It is enough that one of them is in the session.
 
     The upload itself and its answers are kept; see :meth:`PluginUpload.delete_file`.
     """
@@ -486,7 +490,10 @@ def delete_upload(args: DeleteUploadModel) -> Response:
     u = get_current_user_object()
     # Deleting is deliberately not allowed based on teacher or other rights to the document,
     # or based on the answer of the upload because the answer may belong to someone else.
-    if not u.logged_in or not up.is_uploader(u):
+    # Any user of the session is enough: the added users have logged in as well.
+    if not u.logged_in or not any(
+        up.is_uploader(su) for su in get_session_users_objs()
+    ):
         raise AccessDenied("Only the user who uploaded the file can delete it.")
 
     doc_id, task_name = up.relative_filesystem_path.parts[:2]

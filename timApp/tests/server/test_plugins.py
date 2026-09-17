@@ -767,6 +767,57 @@ type: upload
             self.get(path, expect_status=410)
         self.get(keep)
 
+    def test_upload_delete_group_session(self):
+        """All the users of the session that uploaded the file can delete it, also later on their own."""
+        self.login_test1()
+        d = self.create_doc(
+            initial_par="""
+#- {plugin=csPlugin #t}
+type: upload
+uploadAllowDelete: true
+        """
+        )
+        for u in (self.test_user_2, self.test_user_3):
+            u.grant_access(d, AccessType.view)
+        db.session.commit()
+
+        self.login_test2()
+        self.login_test1(add=True)
+        paths = [
+            self.do_plugin_upload(
+                d, "test", "test.txt", f"{d.id}.t", "t", expect_version=i
+            )[1]["file"]
+            for i in (1, 2, 3)
+        ]
+
+        def delete(path: str, **kwargs):
+            return self.json_post("/uploads/delete", {"path": path}, **kwargs)
+
+        # The session that uploaded the file
+        self.assertIsNotNone(delete(paths[0])["deleted"])
+        self.get(paths[0], expect_status=410)
+
+        # A user outside the session
+        self.login_test3()
+        for path in paths[1:]:
+            delete(
+                path,
+                expect_status=403,
+                expect_content="Only the user who uploaded the file can delete it.",
+            )
+
+        # The other user of the upload session alone
+        self.login_test1()
+        self.assertIsNotNone(delete(paths[1])["deleted"])
+        self.get(paths[1], expect_status=410)
+
+        # A user of the upload session as an added user of a session of someone else
+        self.login_test3()
+        self.login_test2(add=True)
+        self.assertIsNotNone(delete(paths[2])["deleted"])
+        self.login_test2()
+        self.get(paths[2], expect_status=410)
+
     def test_upload_unsaved(self):
         """An upload that is never saved in an answer is deleted after a short time."""
         self.login_test1()
