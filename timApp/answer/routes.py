@@ -121,7 +121,10 @@ from timApp.plugin.plugintype import PluginTypeBase
 from timApp.plugin.taskid import TaskId, TaskIdAccess
 from timApp.timdb.exceptions import TimDbException
 from timApp.timdb.sqa import db, run_sql
-from timApp.upload.upload import set_saved_upload_delete_after
+from timApp.upload.upload import (
+    get_unsaved_uploads_in_content,
+    set_saved_upload_delete_after,
+)
 from timApp.upload.uploadedfile import PluginUpload
 from timApp.user.groups import (
     verify_group_view_access,
@@ -1342,9 +1345,16 @@ def post_answer_impl(
                         plugin=plugin,
                         extra={},
                     )
-        if result["savedNew"] is not None and uploads:
+        if result["savedNew"] is not None:
+            # The uploads that are referred to only in the answer text (e.g. Markdown images) belong to the answer too.
+            # Otherwise they would be deleted as unsaved uploads.
+            text_uploads = [
+                au
+                for au in get_unsaved_uploads_in_content(save_object, tid, users)
+                if au not in uploads
+            ]
             # Associate this answer with the upload entries
-            for upload in uploads:
+            for upload in [*uploads, *text_uploads]:
                 # The upload stays with the answers of its uploaders; e.g. a teacher who refers to
                 # the file of a student in an own answer must not take the upload over.
                 plugin_upload = PluginUpload(upload.block)

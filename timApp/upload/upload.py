@@ -184,6 +184,74 @@ def set_saved_upload_delete_after(plugin: Plugin, au: AnswerUpload) -> None:
     au.delete_after = get_upload_delete_after(plugin, au.block.created)
 
 
+def get_unsaved_uploads_in_content(
+    content: object, tid: TaskId, users: list[User]
+) -> list[AnswerUpload]:
+    """Gets the unsaved uploads of the task that the answer content refers to only in its text.
+
+    For example, the formula editor of csPlugin adds the uploaded images to the answer text as Markdown images,
+    and only the latest of the images is in the uploadedFiles list of the answer.
+
+    :param content: The content of the answer to save.
+    :param tid: The task of the answer.
+    :param users: The users of the answer. Only their uploads are returned.
+    :return: The uploads that are not yet saved in any answer, not deleted and referred to in the content.
+    """
+    texts: list[str] = []
+
+    def collect_texts(value: object) -> None:
+        if isinstance(value, str):
+            texts.append(value)
+        elif isinstance(value, dict):
+            for v in value.values():
+                collect_texts(v)
+        elif isinstance(value, list):
+            for v in value:
+                collect_texts(v)
+
+    collect_texts(content)
+    if not any("/uploads/" in text for text in texts):
+        return []
+    # Only the uploads with a short retention period can be unsaved (see pluginupload_file).
+    candidates = (
+        run_sql(
+            select(AnswerUpload)
+            .join(Block, AnswerUpload.upload_block_id == Block.id)
+            .filter(
+                (AnswerUpload.answer_id == None)
+                & (AnswerUpload.deleted_at == None)
+                & (AnswerUpload.delete_after != None)
+                & (Block.type_id == BlockType.Upload.value)
+                & Block.description.startswith(
+                    f"{tid.doc_id}/{tid.task_name}/", autoescape=True
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    result = []
+    for au in candidates:
+        # The character after the path is checked so that e.g. kuva.png does not match kuva.png.bak
+        path = f"/uploads/{au.block.description}"
+        if not any(_has_path_reference(text, path) for text in texts):
+            continue
+        plugin_upload = PluginUpload(au.block)
+        if any(plugin_upload.is_uploader(u) for u in users):
+            result.append(au)
+    return result
+
+
+def _has_path_reference(text: str, path: str) -> bool:
+    start = text.find(path)
+    while start >= 0:
+        end = start + len(path)
+        if end == len(text) or not (text[end].isalnum() or text[end] in "._-/"):
+            return True
+        start = text.find(path, end)
+    return False
+
+
 def get_pluginupload(relfilename: str) -> tuple[str, PluginUpload]:
     """Gets an upload whose file is available. Raises UploadDeleted if the file has been deleted."""
     up = find_pluginupload(relfilename)

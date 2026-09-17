@@ -826,6 +826,68 @@ type: upload
             "and cannot be saved in an answer. Upload the file again.",
         )
 
+    def test_upload_unsaved_in_text(self):
+        """An upload that is referred to only in the answer text is saved in the answer."""
+        self.login_test1()
+        d = self.create_doc(
+            initial_par="""
+#- {plugin=csPlugin #images}
+type: text
+uploadRetention: 30
+
+#- {plugin=csPlugin #other}
+type: text
+        """
+        )
+
+        def upload(task: str, version: int) -> dict:
+            _, ur, _ = self.do_plugin_upload(
+                d,
+                "test",
+                "test.txt",
+                f"{d.id}.{task}",
+                task,
+                expect_version=version,
+                save_answer=False,
+            )
+            return ur
+
+        in_text = upload("images", 1)
+        in_list = upload("images", 2)
+        unused = upload("images", 3)
+        other_task = upload("other", 1)
+        self.test_user_2.grant_access(d, AccessType.view)
+        db.session.commit()
+        self.login_test2()
+        other_user = upload("images", 1)
+        self.login_test1()
+        resp = self.post_answer(
+            "csPlugin",
+            f"{d.id}.images",
+            {
+                "usercode": f"![Image 1]({in_text['file']}) ![Image 2]({in_list['file']}) "
+                f"{other_task['file']} {other_user['file']} {unused['file']}.bak",
+                "uploadedFiles": [{"path": in_list["file"], "type": "text/plain"}],
+                "type": "text",
+            },
+        )
+        self.check_ok_answer(resp)
+
+        def get_au(ur: dict) -> AnswerUpload:
+            return db.session.get(AnswerUpload, ur["block"])
+
+        for ur in (in_text, in_list):
+            au = get_au(ur)
+            self.assertEqual(resp["savedNew"], au.answer_id)
+            days_left = (au.delete_after - get_current_time()).total_seconds() / 86400
+            self.assertAlmostEqual(30, days_left, places=1)
+        # The uploads of other tasks and users and the partial matches of a path are not saved in the answer.
+        for ur in (unused, other_task, other_user):
+            au = get_au(ur)
+            self.assertIsNone(au.answer_id)
+            days_left = (au.delete_after - get_current_time()).total_seconds() / 86400
+            self.assertAlmostEqual(1, days_left, places=1)
+
     def test_upload_retention(self):
         """Uploads of a task with uploadRetention are deleted after the retention period."""
         self.login_test1()
