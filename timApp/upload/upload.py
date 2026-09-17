@@ -416,14 +416,9 @@ def delete_upload(args: DeleteUploadModel) -> Response:
         raise NotExist("The requested upload was not found.")
     up = PluginUpload(block)
     u = get_current_user_object()
-    au = up.answerupload
-    answer = au.answer if au else None
-    # Deleting is deliberately not allowed based on teacher or other rights to the document.
-    if answer:
-        is_own = u in answer.users_all
-    else:
-        is_own = u.get_personal_group() in block.owners
-    if not u.logged_in or not is_own:
+    # Deleting is deliberately not allowed based on teacher or other rights to the document,
+    # or based on the answer of the upload because the answer may belong to someone else.
+    if not u.logged_in or not up.is_uploader(u):
         raise AccessDenied("Only the user who uploaded the file can delete it.")
 
     doc_id, task_name = up.relative_filesystem_path.parts[:2]

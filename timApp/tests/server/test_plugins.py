@@ -669,7 +669,8 @@ type: upload
             d, "test2", "test.txt", task_id, "testupload", expect_version=2
         )
         self.assertEqual(
-            "test2", self.get_no_warn(f"/uploads/{d.id}/testupload/testuser1/2/test.txt")
+            "test2",
+            self.get_no_warn(f"/uploads/{d.id}/testupload/testuser1/2/test.txt"),
         )
 
     def test_upload_delete_route(self):
@@ -698,7 +699,7 @@ type: upload
         deletable = f"/uploads/{d.id}/deletable/testuser2/1/test.txt"
         answered = f"/uploads/{d.id}/answered/testuser2/1/test.txt"
         keep = f"/uploads/{d.id}/keep/testuser2/1/test.txt"
-        # The uploader is resolved from the answer if the upload has been associated with one.
+        # Saving the upload in an answer does not affect who can delete it.
         resp = self.post_answer(
             "csPlugin",
             f"{d.id}.answered",
@@ -712,6 +713,7 @@ type: upload
             select(AnswerUpload).filter_by(answer_id=resp["savedNew"])
         ).scalar_one()
         self.assertEqual(answered, f"/uploads/{au.block.description}")
+        student_answer_id = resp["savedNew"]
         self.json_post(
             "/uploads/delete",
             {"path": keep},
@@ -719,8 +721,23 @@ type: upload
             expect_content="Deleting uploaded files is not allowed in this task.",
         )
 
-        # Not even the owner of the document can delete the file of another user.
+        # Not even the owner of the document can delete the file of another user,
+        # even after saving an own answer that refers to the file.
         self.login_test1()
+        resp = self.post_answer(
+            "csPlugin",
+            f"{d.id}.answered",
+            {
+                "uploadedFiles": [{"path": answered, "type": "text/plain"}],
+                "type": "upload",
+            },
+        )
+        self.check_ok_answer(resp)
+        self.assertNotEqual(student_answer_id, resp["savedNew"])
+        au = run_sql(
+            select(AnswerUpload).filter_by(upload_block_id=au.upload_block_id)
+        ).scalar_one()
+        self.assertEqual(student_answer_id, au.answer_id)
         for path in (deletable, answered):
             self.get(path)
             self.json_post(

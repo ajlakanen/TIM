@@ -9,6 +9,7 @@ from sqlalchemy import select, Select
 from werkzeug.utils import secure_filename
 
 from timApp.answer.answer_models import AnswerUpload
+from timApp.auth.accesstype import AccessType
 from timApp.document.docentry import DocEntry
 from timApp.document.docinfo import DocInfo
 from timApp.item.block import insert_block, Block, BlockType
@@ -305,6 +306,19 @@ class PluginUpload(UploadedFile):
     @property
     def is_deleted(self) -> bool:
         return self.deleted_at is not None
+
+    def is_uploader(self, user: User) -> bool:
+        """Whether the user uploaded the file, either as the logged-in user or as another user of the same session.
+
+        This is based on the rights that are set for the block at upload time (see pluginupload_file),
+        not on the answer of the upload: the answer may belong to someone else, such as a teacher
+        who has saved an answer that refers to the file.
+        """
+        group_id = user.get_personal_group().id
+        return any(
+            (group_id, access_type.value) in self.block.accesses
+            for access_type in (AccessType.owner, AccessType.manage)
+        )
 
     def delete_file(self, deleted_by: User | None = None) -> bool:
         """Deletes the uploaded file from the disk.

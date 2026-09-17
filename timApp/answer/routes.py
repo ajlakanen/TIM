@@ -1345,6 +1345,11 @@ def post_answer_impl(
         if result["savedNew"] is not None and uploads:
             # Associate this answer with the upload entries
             for upload in uploads:
+                # The upload stays with the answers of its uploaders; e.g. a teacher who refers to
+                # the file of a student in an own answer must not take the upload over.
+                plugin_upload = PluginUpload(upload.block)
+                if not any(plugin_upload.is_uploader(u) for u in users):
+                    continue
                 if upload.answer_id is None:
                     set_saved_upload_delete_after(plugin, upload)
                 upload.answer_id = result["savedNew"]
