@@ -15,7 +15,7 @@ import {DomSanitizer} from "@angular/platform-browser";
             <a [href]="src_" [title]="type_">{{name}}</a>
         </p>
         <p *ngIf="type_ == 'unknown'">
-            Ladattu:
+            <ng-container i18n>Uploaded:</ng-container>
             <a [href]="src_" [title]="type_">{{name}}</a>
             <ng-container *ngTemplateOutlet="deleteInfo"></ng-container>
         </p>

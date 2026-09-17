@@ -11583,6 +11583,30 @@ Syötä useiden käyttäjien osoitteet allekkain tai pilkulla erotettuina.</targ
           <context context-type="linenumber">42</context>
         </context-group>
       </trans-unit>
+      <trans-unit id="7778472922316170385" datatype="html">
+        <source> Files uploaded here are deleted automatically <x id="INTERPOLATION" equiv-text="{{markup.uploadRetention}}"/> days after uploading. </source>
+        <target state="translated"> Tähän ladatut tiedostot poistetaan automaattisesti <x id="INTERPOLATION" equiv-text="{{markup.uploadRetention}}"/> päivän kuluttua lataamisesta. </target>
+        <context-group purpose="location">
+          <context context-type="sourcefile">modules/cs/js/csPlugin.ts</context>
+          <context context-type="linenumber">4366,4367</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="4648179087046287880" datatype="html">
+        <source>(deleted automatically on <x id="INTERPOLATION" equiv-text="{{deleteAfter | date:&apos;d.M.yyyy&apos;}}"/>)</source>
+        <target state="translated">(poistetaan automaattisesti <x id="INTERPOLATION" equiv-text="{{deleteAfter | date:&apos;d.M.yyyy&apos;}}"/>)</target>
+        <context-group purpose="location">
+          <context context-type="sourcefile">modules/cs/js/util/upload-result.ts</context>
+          <context context-type="linenumber">39</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="282046293633440568" datatype="html">
+        <source>Uploaded:</source>
+        <target state="translated">Ladattu:</target>
+        <context-group purpose="location">
+          <context context-type="sourcefile">modules/cs/js/util/upload-result.ts</context>
+          <context context-type="linenumber">18</context>
+        </context-group>
+      </trans-unit>
     </body>
   </file>
 </xliff>

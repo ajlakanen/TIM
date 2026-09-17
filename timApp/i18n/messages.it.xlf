@@ -11572,7 +11572,7 @@ Separate multiple addresses with commas or write each address on a new line.</so
       </trans-unit>
       <trans-unit id="6693349469471580292" datatype="html">
         <source>Delete file</source>
-        <target state="new">Delete file</target>
+        <target state="translated">Elimina file</target>
         <context-group purpose="location">
           <context context-type="sourcefile">modules/cs/js/csPlugin.ts</context>
           <context context-type="linenumber">2623,2622</context>
@@ -11584,7 +11584,7 @@ Separate multiple addresses with commas or write each address on a new line.</so
       </trans-unit>
       <trans-unit id="156928157032952484" datatype="html">
         <source>Delete the file <x id="INTERPOLATION" equiv-text="name"/> permanently from the server? This cannot be undone.</source>
-        <target state="new">Delete the file <x id="INTERPOLATION" equiv-text="name"/> permanently from the server? This cannot be undone.</target>
+        <target state="translated">Eliminare definitivamente il file <x id="INTERPOLATION" equiv-text="name"/> dal server? L'operazione non può essere annullata.</target>
         <context-group purpose="location">
           <context context-type="sourcefile">modules/cs/js/csPlugin.ts</context>
           <context context-type="linenumber">2624,2622</context>
@@ -11592,7 +11592,7 @@ Separate multiple addresses with commas or write each address on a new line.</so
       </trans-unit>
       <trans-unit id="3439722930939043426" datatype="html">
         <source>file deleted <x id="INTERPOLATION" equiv-text="{{deleted | date:&apos;d.M.yyyy&apos;}}"/></source>
-        <target state="new">file deleted <x id="INTERPOLATION" equiv-text="{{deleted | date:&apos;d.M.yyyy&apos;}}"/></target>
+        <target state="translated">file eliminato il <x id="INTERPOLATION" equiv-text="{{deleted | date:&apos;d.M.yyyy&apos;}}"/></target>
         <context-group purpose="location">
           <context context-type="sourcefile">modules/cs/js/util/upload-result.ts</context>
           <context context-type="linenumber">11</context>
@@ -11600,10 +11600,34 @@ Separate multiple addresses with commas or write each address on a new line.</so
       </trans-unit>
       <trans-unit id="3164626434961459040" datatype="html">
         <source>Delete the file from the server</source>
-        <target state="new">Delete the file from the server</target>
+        <target state="translated">Elimina il file dal server</target>
         <context-group purpose="location">
           <context context-type="sourcefile">modules/cs/js/util/upload-result.ts</context>
           <context context-type="linenumber">42</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="7778472922316170385" datatype="html">
+        <source> Files uploaded here are deleted automatically <x id="INTERPOLATION" equiv-text="{{markup.uploadRetention}}"/> days after uploading. </source>
+        <target state="translated"> I file caricati qui vengono eliminati automaticamente <x id="INTERPOLATION" equiv-text="{{markup.uploadRetention}}"/> giorni dopo il caricamento. </target>
+        <context-group purpose="location">
+          <context context-type="sourcefile">modules/cs/js/csPlugin.ts</context>
+          <context context-type="linenumber">4366,4367</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="4648179087046287880" datatype="html">
+        <source>(deleted automatically on <x id="INTERPOLATION" equiv-text="{{deleteAfter | date:&apos;d.M.yyyy&apos;}}"/>)</source>
+        <target state="translated">(verrà eliminato automaticamente il <x id="INTERPOLATION" equiv-text="{{deleteAfter | date:&apos;d.M.yyyy&apos;}}"/>)</target>
+        <context-group purpose="location">
+          <context context-type="sourcefile">modules/cs/js/util/upload-result.ts</context>
+          <context context-type="linenumber">39</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="282046293633440568" datatype="html">
+        <source>Uploaded:</source>
+        <target state="translated">Caricato:</target>
+        <context-group purpose="location">
+          <context context-type="sourcefile">modules/cs/js/util/upload-result.ts</context>
+          <context context-type="linenumber">18</context>
         </context-group>
       </trans-unit>
     </body>
