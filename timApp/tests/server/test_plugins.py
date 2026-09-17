@@ -601,6 +601,10 @@ type: upload
         )
         self.check_ok_answer(resp)
         self.get(url)
+        # The answer report shows the content of the uploaded file.
+        report = self.get(f"/allAnswersPlain/{task_id}")
+        self.assertTrue(report.endswith("\ntest"), report)
+        self.assertNotIn("ERROR", report)
 
         up = PluginUpload(db.session.get(Block, ur["block"]))
         file_path = up.filesystem_path

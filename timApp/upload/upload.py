@@ -147,16 +147,29 @@ class UploadDeleted(Gone):
     """The requested upload exists but its file has been deleted."""
 
 
-def raise_if_deleted(up: PluginUpload) -> None:
+def upload_deleted_message(up: PluginUpload) -> str:
     deleted_at = up.deleted_at
-    if deleted_at is not None:
-        raise UploadDeleted(
-            f"The file {up.filename} was deleted on {deleted_at.strftime('%Y-%m-%d')} "
-            f"and is no longer available."
-        )
+    assert deleted_at is not None
+    return (
+        f"The file {up.filename} was deleted on {deleted_at.strftime('%Y-%m-%d')} "
+        f"and is no longer available."
+    )
+
+
+def raise_if_deleted(up: PluginUpload) -> None:
+    if up.is_deleted:
+        raise UploadDeleted(upload_deleted_message(up))
 
 
 def get_pluginupload(relfilename: str) -> tuple[str, PluginUpload]:
+    """Gets an upload whose file is available. Raises UploadDeleted if the file has been deleted."""
+    up = find_pluginupload(relfilename)
+    raise_if_deleted(up)
+    return up.content_mimetype, up
+
+
+def find_pluginupload(relfilename: str) -> PluginUpload:
+    """Gets an upload after checking the access to it. The file of the upload may have been deleted."""
     from timApp.peerreview.util.peerreview_utils import is_peerreview_enabled
 
     relfilename = check_and_format_filename(relfilename)
@@ -200,11 +213,7 @@ def get_pluginupload(relfilename: str) -> tuple[str, PluginUpload]:
                 "Sorry, you don't have permission to access this upload."
             )
 
-    up = PluginUpload(block)
-    raise_if_deleted(up)
-    p = up.filesystem_path.as_posix()
-    mt = get_mimetype(p)
-    return mt, up
+    return PluginUpload(block)
 
 
 def get_multiple_pluginuploads(relfilenames: list[str]) -> list[PluginUpload]:
