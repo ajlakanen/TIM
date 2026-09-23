@@ -11583,12 +11583,12 @@ Syötä useiden käyttäjien osoitteet allekkain tai pilkulla erotettuina.</targ
           <context context-type="linenumber">42</context>
         </context-group>
       </trans-unit>
-      <trans-unit id="7778472922316170385" datatype="html">
-        <source> Files uploaded here are deleted automatically <x id="INTERPOLATION" equiv-text="{{uploadRetentionDays}}"/> days after uploading. </source>
-        <target state="translated"> Tähän ladatut tiedostot poistetaan automaattisesti <x id="INTERPOLATION" equiv-text="{{uploadRetentionDays}}"/> päivän kuluttua lataamisesta. </target>
+      <trans-unit id="5320744163801052167" datatype="html">
+        <source> New files uploaded here are deleted automatically <x id="INTERPOLATION" equiv-text="{{uploadRetentionDays}}"/> days after uploading. The deletion date is shown next to the files that will be deleted. </source>
+        <target state="translated"> Tähän ladattavat uudet tiedostot poistetaan automaattisesti <x id="INTERPOLATION" equiv-text="{{uploadRetentionDays}}"/> päivän kuluttua lataamisesta. Poistettavien tiedostojen kohdalla näkyy poistopäivä. </target>
         <context-group purpose="location">
           <context context-type="sourcefile">modules/cs/js/csPlugin.ts</context>
-          <context context-type="linenumber">4366,4367</context>
+          <context context-type="linenumber">4395,4396</context>
         </context-group>
       </trans-unit>
       <trans-unit id="4648179087046287880" datatype="html">
