@@ -4392,7 +4392,8 @@ ${fhtml}
                                      (uploadDone)="onUploadDone($event)">
                 </file-select-manager>
                 <p *ngIf="uploadRetentionDays" class="small" i18n>
-                    Files uploaded here are deleted automatically {{uploadRetentionDays}} days after uploading.
+                    New files uploaded here are deleted automatically {{uploadRetentionDays}} days after uploading.
+                    The deletion date is shown next to the files that will be deleted.
                 </p>
                 <div [hidden]="formulaEditor" class="form-inline small">
                     <span *ngFor="let item of uploadedFiles">
