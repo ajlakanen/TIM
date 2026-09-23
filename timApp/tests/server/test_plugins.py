@@ -1025,6 +1025,83 @@ type: upload
         self.assertEqual({"path", "type", "deleted"}, set(files[0].keys()), files[0])
         self.assertEqual(au.deleted_at, dateutil.parser.parse(files[0]["deleted"]))
 
+    def test_upload_deletion_info_in_fields(self):
+        """Fields that refer to uploads get the deletion times from the database, like the plugins."""
+        self.login_test1()
+        d = self.create_doc(
+            initial_par="""
+#- {plugin=csPlugin #deleted}
+type: upload
+
+#- {plugin=csPlugin #expiring}
+type: upload
+uploadRetention: 30
+
+#- {plugin=textfield #out}
+
+#- {#r plugin=jsrunner}
+group: testuser1
+fields:
+ - deleted.uploadedFiles=d
+ - expiring.ALL=e
+ - out
+program: |!!
+tools.setString("out", JSON.stringify([tools.getValue("d", null), tools.getValue("e", null)]));
+!!
+        """
+        )
+        # An older answer that refers to a single file only
+        _, deleted, _ = self.do_plugin_upload(
+            d, "test", "test.txt", f"{d.id}.deleted", "deleted"
+        )
+        self.assertTrue(
+            PluginUpload(db.session.get(Block, deleted["block"])).delete_file()
+        )
+        _, expiring, _ = self.do_plugin_upload(
+            d, "test", "test.txt", f"{d.id}.expiring", "expiring", save_answer=False
+        )
+        # The times saved in the answer are replaced.
+        resp = self.post_answer(
+            "csPlugin",
+            f"{d.id}.expiring",
+            {
+                "uploadedFiles": [
+                    {
+                        "path": expiring["file"],
+                        "type": "text/plain",
+                        "deleted": "2000-01-01T00:00:00+00:00",
+                    }
+                ],
+                "type": "upload",
+            },
+        )
+        self.check_ok_answer(resp)
+
+        self.post_answer("jsrunner", f"{d.id}.r", user_input={})
+        out = run_sql(select(Answer).filter_by(task_id=f"{d.id}.out")).scalars().one()
+        deleted_files, expiring_all = json.loads(json.loads(out.content)["c"])
+        au_deleted = db.session.get(AnswerUpload, deleted["block"])
+        au_expiring = db.session.get(AnswerUpload, expiring["block"])
+        self.assertEqual(1, len(deleted_files))
+        self.assertEqual(
+            {"path", "type", "deleted"}, set(deleted_files[0].keys()), deleted_files
+        )
+        self.assertEqual(deleted["file"], deleted_files[0]["path"])
+        self.assertEqual(
+            au_deleted.deleted_at, dateutil.parser.parse(deleted_files[0]["deleted"])
+        )
+        expiring_files = expiring_all["uploadedFiles"]
+        self.assertEqual(1, len(expiring_files))
+        self.assertEqual(
+            {"path", "type", "deleteAfter"},
+            set(expiring_files[0].keys()),
+            expiring_files,
+        )
+        self.assertEqual(
+            au_expiring.delete_after,
+            dateutil.parser.parse(expiring_files[0]["deleteAfter"]),
+        )
+
     def test_upload_retention_invalid(self):
         """Only a positive integer is a retention period; the uploads of other tasks are kept."""
         self.login_test1()
