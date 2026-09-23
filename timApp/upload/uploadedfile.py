@@ -352,7 +352,7 @@ class PluginUpload(UploadedFile):
 
         The database entries (Block, AnswerUpload and the answers) are kept so that it remains visible
         that the file was uploaded. The answers are not modified; the deletion time is added
-        to the state of an answer when it is sent to the plugin (see :func:`add_upload_deletion_times`).
+        to the state of an answer when it is sent to the plugin (see :func:`add_upload_deletion_info`).
 
         The directory of the file is kept on purpose: the running number of a new upload
         is based on the number of existing directories (see :meth:`UploadedFile.save_new`).
@@ -388,11 +388,13 @@ class PluginUpload(UploadedFile):
         return True
 
 
-def add_upload_deletion_times(state: Any) -> None:
-    """Marks the deleted uploads in the state of an answer that is about to be sent to a plugin.
+def add_upload_deletion_info(state: Any) -> None:
+    """Adds the deletion times of the uploads to the state of an answer that is about to be sent to a plugin.
 
-    The deletion time is not saved in the answers; it is always taken from :class:`AnswerUpload`.
-    The plugin must accept the field "deleted" in the items of uploadedFiles.
+    The deletion times are not saved in the answers; they are always taken from :class:`AnswerUpload`.
+    Values saved in the answer by the plugin are replaced.
+    The plugin must accept the fields "deleted" (the file has been deleted) and "deleteAfter"
+    (the file is going to be deleted automatically) in the items of uploadedFiles.
 
     :param state: The content of the answer. Modified in place.
     """
@@ -405,6 +407,9 @@ def add_upload_deletion_times(state: Any) -> None:
         for f in (files if isinstance(files, list) else [])
         if isinstance(f, dict) and isinstance(f.get("path"), str)
     ]
+    for f in files:
+        f.pop("deleted", None)
+        f.pop("deleteAfter", None)
     # Older answers refer to a single file only
     old_file = state.get("uploadedFile")
     if not isinstance(old_file, str):
@@ -415,30 +420,38 @@ def add_upload_deletion_times(state: Any) -> None:
     rel_paths = [p[len(prefix) :] for p in paths if p.startswith(prefix)]
     if not rel_paths:
         return
-    deleted = {
-        prefix + path: deleted_at
-        for path, deleted_at in run_sql(
-            select(Block.description, AnswerUpload.deleted_at)
+    deletion_times = {
+        prefix + path: (deleted_at, delete_after)
+        for path, deleted_at, delete_after in run_sql(
+            select(
+                Block.description, AnswerUpload.deleted_at, AnswerUpload.delete_after
+            )
             .join(AnswerUpload, AnswerUpload.upload_block_id == Block.id)
             .filter(
                 Block.description.in_(rel_paths)
                 & (Block.type_id == BlockType.Upload.value)
-                & (AnswerUpload.deleted_at != None)
+                & (
+                    (AnswerUpload.deleted_at != None)
+                    | (AnswerUpload.delete_after != None)
+                )
             )
         )
     }
-    for f in files:
-        deleted_at = deleted.get(f["path"])
+
+    def add_times(f: dict[str, Any]) -> None:
+        deleted_at, delete_after = deletion_times[f["path"]]
         if deleted_at:
             f["deleted"] = deleted_at.isoformat()
-    if old_file in deleted and not files:
-        state["uploadedFiles"] = [
-            {
-                "path": old_file,
-                "type": state.get("uploadedType", ""),
-                "deleted": deleted[old_file].isoformat(),
-            }
-        ]
+        elif delete_after:
+            f["deleteAfter"] = delete_after.isoformat()
+
+    for f in files:
+        if f["path"] in deletion_times:
+            add_times(f)
+    if old_file in deletion_times and not files:
+        f = {"path": old_file, "type": state.get("uploadedType", "")}
+        add_times(f)
+        state["uploadedFiles"] = [f]
 
 
 def delete_expired_uploads() -> int:

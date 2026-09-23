@@ -2985,7 +2985,11 @@ ${fhtml}
                 userinput: this.userinput || "",
                 isInput: isInput,
                 userargs: this.userargs || "",
-                uploadedFiles: existingUploads,
+                // The deletion times are not saved in the answer; the server adds them from the database.
+                uploadedFiles: existingUploads.map((f) => ({
+                    path: f.path,
+                    type: f.type,
+                })),
                 nosave: nosave || this.nosave,
                 type: runType,
                 ...extraMarkUp,

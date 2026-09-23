@@ -38,7 +38,7 @@ from timApp.timdb.sqa import db, run_sql
 from timApp.upload.uploadedfile import (
     PluginUpload,
     delete_expired_uploads,
-    add_upload_deletion_times,
+    add_upload_deletion_info,
 )
 from timApp.user.special_group_names import ANONYMOUS_USERNAME
 from timApp.user.user import User
@@ -647,7 +647,7 @@ type: upload
         deleted_files = [{"path": url, "type": "text/plain", "deleted": deleted_at}]
         for a in answers:
             state = a.content_as_json
-            add_upload_deletion_times(state)
+            add_upload_deletion_info(state)
             self.assertEqual(deleted_files, state["uploadedFiles"])
             r = self.get(
                 "/getState",
@@ -968,6 +968,48 @@ type: upload
         days_left = (au.delete_after - get_current_time()).total_seconds() / 86400
         self.assertAlmostEqual(30, days_left, places=1)
 
+        # The deletion times are always taken from the database, not from the answer.
+        resp = self.post_answer(
+            "csPlugin",
+            f"{d.id}.expiring",
+            {
+                "uploadedFiles": [
+                    {
+                        "path": expiring["file"],
+                        "type": "text/plain",
+                        "deleteAfter": "2000-01-01T00:00:00+00:00",
+                        "deleted": "2000-01-01T00:00:00+00:00",
+                    }
+                ],
+                "type": "upload",
+            },
+        )
+        self.check_ok_answer(resp)
+
+        def get_rendered_files() -> list[dict]:
+            r = self.get(
+                "/getState",
+                query_string={
+                    "user_id": self.current_user_id(),
+                    "answer_id": resp["savedNew"],
+                    "par_id": d.document.get_paragraphs()[0].get_id(),
+                    "doc_id": d.id,
+                },
+            )
+            return self.get_plugin_json(html.fromstring(r["html"]))["uploadedFiles"]
+
+        au.delete_after = get_current_time() + timedelta(days=60)
+        db.session.commit()
+        au = db.session.get(AnswerUpload, expiring["block"])
+        files = get_rendered_files()
+        self.assertEqual(1, len(files))
+        self.assertEqual(
+            {"path", "type", "deleteAfter"}, set(files[0].keys()), files[0]
+        )
+        self.assertEqual(
+            au.delete_after, dateutil.parser.parse(files[0]["deleteAfter"])
+        )
+
         self.assertEqual(0, delete_expired_uploads())
         self.get(expiring["file"])
 
@@ -978,6 +1020,10 @@ type: upload
         self.assertEqual(0, delete_expired_uploads())
         self.get(expiring["file"], expect_status=410)
         self.get(keep["file"])
+        au = db.session.get(AnswerUpload, expiring["block"])
+        files = get_rendered_files()
+        self.assertEqual({"path", "type", "deleted"}, set(files[0].keys()), files[0])
+        self.assertEqual(au.deleted_at, dateutil.parser.parse(files[0]["deleted"]))
 
     def test_upload_retention_invalid(self):
         """Only a positive integer is a retention period; the uploads of other tasks are kept."""
