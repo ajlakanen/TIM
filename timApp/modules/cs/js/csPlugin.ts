@@ -54,6 +54,8 @@ import {
     valueOr,
 } from "tim/util/utils";
 import {TimDefer} from "tim/util/timdefer";
+import {Users} from "tim/user/userService";
+import {showConfirm} from "tim/ui/showConfirmDialog";
 import {AngularPluginBase} from "tim/plugin/angular-plugin-base.directive";
 import deepEqual from "deep-equal";
 import type {ITemplateParam} from "tim/ui/showTemplateReplaceDialog";
@@ -496,6 +498,8 @@ interface IUploadResponse {
     file: string;
     type: string;
     block: number;
+    // Time when the file is deleted automatically (uploadRetention)
+    deleteAfter?: string;
 }
 
 export const TemplateButton = t.intersection([
@@ -652,10 +656,18 @@ const FileSubmission = t.intersection([
 ]);
 export type IFileSubmission = t.TypeOf<typeof FileSubmission>;
 
-const UploadedFile = t.type({
-    path: t.string,
-    type: t.string,
-});
+const UploadedFile = t.intersection([
+    t.type({
+        path: t.string,
+        type: t.string,
+    }),
+    t.partial({
+        // Time when the file was deleted from the server
+        deleted: t.string,
+        // Time when the file is going to be deleted automatically (uploadRetention)
+        deleteAfter: t.string,
+    }),
+]);
 
 interface IUploadedFile extends t.TypeOf<typeof UploadedFile> {}
 
@@ -759,6 +771,8 @@ const CsMarkupOptional = t.partial({
     treplace: t.string,
     uploadbycode: t.boolean,
     uploadautosave: t.boolean,
+    uploadAllowDelete: t.boolean,
+    uploadRetention: nullable(t.number),
     uploadstem: t.string,
     userargs: t.union([t.string, t.number]),
     userinput: t.union([t.string, t.number]),
@@ -2591,6 +2605,69 @@ ${fhtml}
         this.fileSelect?.removeFile(data.file.path);
     }
 
+    /**
+     * The retention period of the uploads (uploadRetention) in days, or undefined if the files are not deleted
+     * automatically. The value is interpreted the same way as in the server (get_upload_delete_after).
+     */
+    get uploadRetentionDays(): number | undefined {
+        const days = this.markup.uploadRetention;
+        // Files with a forced name are shared by the uploads, so they are never deleted.
+        if (
+            this.markup.forceUploadName ||
+            typeof days !== "number" ||
+            !Number.isInteger(days) ||
+            days <= 0
+        ) {
+            return undefined;
+        }
+        return days;
+    }
+
+    /**
+     * Whether the user can delete the uploaded files.
+     * Only the user who uploaded the file can delete it, so deleting is not available
+     * when looking at the answers of another user.
+     */
+    get canDeleteUploads(): boolean {
+        // Files with a forced name are shared by the uploads, so they are never deleted.
+        if (
+            !this.markup.uploadAllowDelete ||
+            this.markup.forceUploadName ||
+            this.attrsall.preview
+        ) {
+            return false;
+        }
+        const selectedUser = this.vctrl?.selectedUser;
+        return (
+            Users.isLoggedIn() &&
+            (!selectedUser || selectedUser.id === Users.getCurrent().id)
+        );
+    }
+
+    async deleteUploadedFile(file: IUploadedFile) {
+        const name = this.uploadedFileName(file.path);
+        if (
+            !(await showConfirm(
+                $localize`Delete file`,
+                $localize`Delete the file ${name}:INTERPOLATION: permanently from the server? This cannot be undone.`
+            ))
+        ) {
+            return;
+        }
+        const r = await toPromise(
+            this.http.post<{deleted: string}>("/uploads/delete", {
+                path: file.path,
+            })
+        );
+        if (r.ok) {
+            file.deleted = r.result.deleted;
+            this.error = undefined;
+        } else {
+            this.error = r.result.error.error;
+        }
+        this.cdr.detectChanges();
+    }
+
     onUploadResponse(resp: unknown) {
         if (!resp) {
             return;
@@ -2601,7 +2678,13 @@ ${fhtml}
             this.uploadedFiles.clear();
         }
         for (const response of resps) {
-            this.uploadedFiles.push({path: response.file, type: response.type});
+            this.uploadedFiles.push({
+                path: response.file,
+                type: response.type,
+                ...(response.deleteAfter
+                    ? {deleteAfter: response.deleteAfter}
+                    : {}),
+            });
         }
 
         // Add reference to image to markdown
@@ -2833,13 +2916,15 @@ ${fhtml}
                     this.uploadByCodeFiles.find((f2) => f2.path == f.path)
                 )
                 .map((f) => ({source: "uploadByCode", ...f})) ?? [];
-        const uploadedFiles: IFileSubmission[] = this.uploadedFiles
+        // The deleted files stay in the list only to show that they have been deleted.
+        const existingUploads = this.uploadedFiles
             .toArray()
-            .map((f) => ({
-                source: "upload:" + f.path,
-                path: this.uploadedFileName(f.path),
-                type: f.type,
-            }));
+            .filter((f) => !f.deleted);
+        const uploadedFiles: IFileSubmission[] = existingUploads.map((f) => ({
+            source: "upload:" + f.path,
+            path: this.uploadedFileName(f.path),
+            type: f.type,
+        }));
         const externalFiles = this.externalFiles ?? [];
 
         let allFiles: IFileSubmission[] = editorFiles
@@ -2900,7 +2985,11 @@ ${fhtml}
                 userinput: this.userinput || "",
                 isInput: isInput,
                 userargs: this.userargs || "",
-                uploadedFiles: this.uploadedFiles.toArray(),
+                // The deletion times are not saved in the answer; the server adds them from the database.
+                uploadedFiles: existingUploads.map((f) => ({
+                    path: f.path,
+                    type: f.type,
+                })),
                 nosave: nosave || this.nosave,
                 type: runType,
                 ...extraMarkUp,
@@ -4302,9 +4391,17 @@ ${fhtml}
                                      (upload)="onUploadResponse($event)"
                                      (uploadDone)="onUploadDone($event)">
                 </file-select-manager>
+                <p *ngIf="uploadRetentionDays" class="small" i18n>
+                    New files uploaded here are deleted automatically {{uploadRetentionDays}} days after uploading.
+                    The deletion date is shown next to the files that will be deleted.
+                </p>
                 <div [hidden]="formulaEditor" class="form-inline small">
                     <span *ngFor="let item of uploadedFiles">
-                        <cs-upload-result [src]="item.path" [type]="item.type"></cs-upload-result>
+                        <cs-upload-result [src]="item.path" [type]="item.type"
+                                          [deleted]="item.deleted"
+                                          [deleteAfter]="item.deleteAfter"
+                                          [allowDelete]="canDeleteUploads"
+                                          (delete)="deleteUploadedFile(item)"></cs-upload-result>
                     </span>
                 </div>
             </div>

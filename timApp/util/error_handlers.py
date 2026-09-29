@@ -334,6 +334,10 @@ def register_errorhandlers(app: Flask) -> None:
     def handle_404(error: HTTPException) -> ResponseReturnValue:
         return error_generic(error.description, 404)
 
+    @app.errorhandler(410)
+    def handle_410(error: HTTPException) -> ResponseReturnValue:
+        return error_generic(error.description, 410)
+
     @app.errorhandler(413)
     def handle_413(error: HTTPException) -> ResponseReturnValue:
         error.description = (

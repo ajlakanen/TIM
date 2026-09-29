@@ -127,6 +127,10 @@ CELERYBEAT_SCHEDULE = {
         "task": "timApp.tim_celery.cleanup_oauth2_tokens",
         "schedule": crontab(hour="*/24", minute="0"),
     },
+    "cleanup-expired-uploads": {
+        "task": "timApp.tim_celery.cleanup_expired_uploads",
+        "schedule": crontab(hour="3", minute="30"),
+    },
     "cleanup-verifications": {
         "task": "timApp.tim_celery.cleanup_verifications",
         "schedule": crontab(minute="*/10"),
@@ -242,6 +246,9 @@ If true, enables logging in via special temporary login codes.
 LOG_HOST = False
 
 MAX_ANSWER_CONTENT_SIZE = 200 * 1024  # bytes
+
+# How long a plugin upload is kept if it is never saved in an answer (e.g. because saving the answer failed).
+UNSAVED_UPLOAD_RETENTION = timedelta(days=1)
 
 SCIM_ALLOWED_IP = {"127.0.0.1"}
 SCIM_ALLOW_UPDATE_HAKA_USER_INFO = False

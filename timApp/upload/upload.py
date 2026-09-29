@@ -4,6 +4,7 @@ import os
 import posixpath
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from hashlib import sha1
 from pathlib import Path, PurePosixPath
 from urllib.parse import unquote, urlparse
@@ -11,11 +12,13 @@ from urllib.parse import unquote, urlparse
 from PIL import Image
 from PIL import UnidentifiedImageError
 from PIL.Image import DecompressionBombError, registered_extensions
-from flask import Blueprint, request, send_file, Response, url_for
+from flask import Blueprint, request, send_file, Response, url_for, current_app
 from img2pdf import convert
 from sqlalchemy import case, select
+from werkzeug.exceptions import Gone
 from werkzeug.utils import secure_filename
 
+from timApp.answer.answer_models import AnswerUpload
 from timApp.auth.accesshelper import (
     verify_view_access,
     verify_seeanswers_access,
@@ -33,7 +36,11 @@ from timApp.auth.oauth2.models import Scope
 from timApp.auth.oauth2.oauth2 import require_oauth
 from authlib.integrations.flask_oauth2 import current_token
 from timApp.auth.sessioninfo import get_current_user_object, user_context_with_logged_in
-from timApp.auth.sessioninfo import logged_in, get_current_user_group_object
+from timApp.auth.sessioninfo import (
+    logged_in,
+    get_current_user_group_object,
+    get_session_users_objs,
+)
 from timApp.document.docentry import DocEntry
 from timApp.document.docinfo import DocInfo
 from timApp.document.documents import import_document
@@ -44,6 +51,7 @@ from timApp.item.validation import (
     validate_item_and_create_intermediate_folders,
     validate_uploaded_document_content,
 )
+from timApp.plugin.plugin import Plugin
 from timApp.plugin.pluginexception import PluginException
 from timApp.plugin.taskid import TaskId, TaskIdAccess
 from timApp.timdb.dbaccess import get_files_path
@@ -69,6 +77,7 @@ from timApp.util.flask.responsehelper import (
     add_csp_header,
     safe_redirect,
 )
+from timApp.util.utils import get_current_time
 from timApp.util.pdftools import (
     StampDataInvalidError,
     default_stamp_format,
@@ -140,18 +149,153 @@ def check_and_format_filename(relfilename: str) -> str:
     return relfilename
 
 
+class UploadDeleted(Gone):
+    """The requested upload exists but its file has been deleted."""
+
+
+def upload_deleted_message(up: PluginUpload) -> str:
+    deleted_at = up.deleted_at
+    assert deleted_at is not None
+    return (
+        f"The file {up.filename} was deleted on {deleted_at.strftime('%Y-%m-%d')} "
+        f"and is no longer available."
+    )
+
+
+def raise_if_deleted(up: PluginUpload) -> None:
+    if up.is_deleted:
+        raise UploadDeleted(upload_deleted_message(up))
+
+
+def get_upload_delete_after(plugin: Plugin, uploaded: datetime) -> datetime | None:
+    """Gets the time when an upload of the task can be deleted automatically (uploadRetention).
+
+    :param plugin: The task of the upload.
+    :param uploaded: The time when the file was uploaded.
+    :return: The deletion time, or None if the task keeps the uploads indefinitely.
+    """
+    retention_days = plugin.known.uploadRetention
+    # The markup model accepts a boolean as an integer; csPlugin interprets the value the same way.
+    if (
+        isinstance(retention_days, int)
+        and not isinstance(retention_days, bool)
+        and retention_days > 0
+    ):
+        return uploaded + timedelta(days=retention_days)
+    return None
+
+
+def set_saved_upload_delete_after(plugin: Plugin, au: AnswerUpload) -> None:
+    """Replaces the short retention period of an unsaved upload with the retention period of the task.
+
+    Must be called when the upload is saved in an answer for the first time.
+    Uploads with a forced name are never deleted (see PluginUpload.has_forced_name).
+    """
+    if PluginUpload(au.block).has_forced_name:
+        au.delete_after = None
+        return
+    au.delete_after = get_upload_delete_after(plugin, au.block.created)
+
+
+def get_unsaved_uploads_in_content(
+    content: object, tid: TaskId, users: list[User]
+) -> list[AnswerUpload]:
+    """Gets the unsaved uploads of the task that the answer content refers to only in its text.
+
+    For example, the formula editor of csPlugin adds the uploaded images to the answer text as Markdown images,
+    and only the latest of the images is in the uploadedFiles list of the answer.
+
+    :param content: The content of the answer to save.
+    :param tid: The task of the answer.
+    :param users: The users of the answer. Only their uploads are returned.
+    :return: The uploads that are not yet saved in any answer, not deleted and referred to in the content.
+    """
+    texts: list[str] = []
+
+    def collect_texts(value: object) -> None:
+        if isinstance(value, str):
+            texts.append(value)
+        elif isinstance(value, dict):
+            for v in value.values():
+                collect_texts(v)
+        elif isinstance(value, list):
+            for v in value:
+                collect_texts(v)
+
+    collect_texts(content)
+    if not any("/uploads/" in text for text in texts):
+        return []
+    # Only the uploads with a short retention period can be unsaved (see pluginupload_file).
+    candidates = (
+        run_sql(
+            select(AnswerUpload)
+            .join(Block, AnswerUpload.upload_block_id == Block.id)
+            .filter(
+                (AnswerUpload.answer_id == None)
+                & (AnswerUpload.deleted_at == None)
+                & (AnswerUpload.delete_after != None)
+                & (Block.type_id == BlockType.Upload.value)
+                & Block.description.startswith(
+                    f"{tid.doc_id}/{tid.task_name}/", autoescape=True
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    result = []
+    for au in candidates:
+        # The character after the path is checked so that e.g. kuva.png does not match kuva.png.bak
+        path = f"/uploads/{au.block.description}"
+        if not any(_has_path_reference(text, path) for text in texts):
+            continue
+        plugin_upload = PluginUpload(au.block)
+        if any(plugin_upload.is_uploader(u) for u in users):
+            result.append(au)
+    return result
+
+
+def _has_path_reference(text: str, path: str) -> bool:
+    start = text.find(path)
+    while start >= 0:
+        end = start + len(path)
+        if end == len(text) or not (text[end].isalnum() or text[end] in "._-/"):
+            return True
+        start = text.find(path, end)
+    return False
+
+
 def get_pluginupload(relfilename: str) -> tuple[str, PluginUpload]:
+    """Gets an upload whose file is available. Raises UploadDeleted if the file has been deleted."""
+    up = find_pluginupload(relfilename)
+    raise_if_deleted(up)
+    try:
+        mimetype = up.content_mimetype
+    except FileNotFoundError:
+        raise NotExist("The file of the upload was not found.")
+    return mimetype, up
+
+
+def find_pluginupload(relfilename: str) -> PluginUpload:
+    """Gets an upload after checking the access to it. The file of the upload may have been deleted."""
     from timApp.peerreview.util.peerreview_utils import is_peerreview_enabled
 
     relfilename = check_and_format_filename(relfilename)
     block = (
         run_sql(
             select(Block)
+            .outerjoin(AnswerUpload)
             .filter(
                 (Block.description.startswith(relfilename))
                 & (Block.type_id == BlockType.Upload.value)
             )
-            .order_by(Block.description.desc())
+            # Uploads with a forced name may share the description.
+            # A deleted one must not hide a newer upload whose file exists.
+            .order_by(
+                Block.description.desc(),
+                AnswerUpload.deleted_at.is_not(None),
+                Block.id,
+            )
             .limit(1)
         )
         .scalars()
@@ -184,10 +328,7 @@ def get_pluginupload(relfilename: str) -> tuple[str, PluginUpload]:
                 "Sorry, you don't have permission to access this upload."
             )
 
-    up = PluginUpload(block)
-    p = up.filesystem_path.as_posix()
-    mt = get_mimetype(p)
-    return mt, up
+    return PluginUpload(block)
 
 
 def get_multiple_pluginuploads(relfilenames: list[str]) -> list[PluginUpload]:
@@ -244,6 +385,8 @@ def get_multiple_pluginuploads(relfilenames: list[str]) -> list[PluginUpload]:
                 )
             doc_set.add(tid.doc_id)
     ups = [PluginUpload(block) for block in blocks]
+    for up in ups:
+        raise_if_deleted(up)
     return ups
 
 
@@ -284,12 +427,27 @@ def pluginupload_file(doc_id: int, task_id: str):
             filename += f"_{force_index}"
         filename += file_extension
 
+    p = task_access.plugin
+    # An upload that is never saved in an answer is not visible anywhere, so it is kept only for a short time.
+    # The actual deletion time is set when the upload is saved in an answer (see set_saved_upload_delete_after).
+    # Uploads with a forced name are kept because they have a fixed address that may be referred to elsewhere.
+    unsaved_delete_after = None
+    if not force_upload_name:
+        unsaved_delete_after = (
+            get_current_time() + current_app.config["UNSAVED_UPLOAD_RETENTION"]
+        )
+
     f = UploadedFile.save_new(
         filename,
         BlockType.Upload,
         file_data=content,
-        upload_info=PluginUploadInfo(task_id_name=task_id, user=u, doc=d),
+        upload_info=PluginUploadInfo(
+            task_id_name=task_id, user=u, doc=d, delete_after=unsaved_delete_after
+        ),
         forced_name=bool(force_upload_name),
+    )
+    delete_after = (
+        None if force_upload_name else get_upload_delete_after(p, f.block.created)
     )
     f.block.set_owner(u.get_personal_group())
     grant_access_to_session_users(f)
@@ -301,9 +459,10 @@ def pluginupload_file(doc_id: int, task_id: str):
                 f"Failed to post-process {f.filesystem_path.name}. "
                 f"Please make sure the PDF is not broken."
             )
-    p = task_access.plugin
     if p.type == "reviewcanvas":
-        returninfo = convert_pdf_or_compress_image(f, u, d, task_id)
+        returninfo = convert_pdf_or_compress_image(
+            f, u, d, task_id, unsaved_delete_after
+        )
     else:
         returninfo = [
             {
@@ -312,8 +471,77 @@ def pluginupload_file(doc_id: int, task_id: str):
                 "block": f.id,
             }
         ]
+        if delete_after:
+            # Lets the plugin tell the user when the file is going to be deleted
+            returninfo[0]["deleteAfter"] = delete_after
     db.session.commit()
     return json_response(returninfo)
+
+
+@dataclass
+class DeleteUploadModel:
+    path: str
+
+
+@upload.post("/uploads/delete")
+@use_model(DeleteUploadModel)
+def delete_upload(args: DeleteUploadModel) -> Response:
+    """Deletes the file of an upload. Only the users who uploaded the file can delete it,
+    and only if the task allows it (uploadAllowDelete). It is enough that one of them is in the session.
+
+    The upload itself and its answers are kept; see :meth:`PluginUpload.delete_file`.
+    """
+    relfilename = args.path.removeprefix("/uploads/")
+    if check_and_format_filename(relfilename) != relfilename:
+        raise RouteException("Incorrect filename specification.")
+    block = (
+        run_sql(
+            select(Block)
+            .filter(
+                (Block.description == relfilename)
+                & (Block.type_id == BlockType.Upload.value)
+            )
+            .order_by(Block.id.desc())
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
+    if not block:
+        raise NotExist("The requested upload was not found.")
+    up = PluginUpload(block)
+    if up.has_forced_name:
+        # The file is shared by all the uploads that have the same forced name.
+        raise AccessDenied("Files uploaded with a forced name cannot be deleted.")
+    u = get_current_user_object()
+    # Deleting is deliberately not allowed based on teacher or other rights to the document,
+    # or based on the answer of the upload because the answer may belong to someone else.
+    # Any user of the session is enough: the added users have logged in as well.
+    if not u.logged_in or not any(
+        up.is_uploader(su) for su in get_session_users_objs()
+    ):
+        raise AccessDenied("Only the user who uploaded the file can delete it.")
+
+    doc_id, task_name = up.relative_filesystem_path.parts[:2]
+    d = get_doc_or_abort(int(doc_id))
+    try:
+        tid = TaskId.parse(task_name, require_doc_id=False, allow_block_hint=False)
+    except PluginException:
+        raise RouteException()
+    tid.doc_id = d.id
+    # ReadOnly is enough: the file can be deleted also after answering the task is no longer possible.
+    task_access = verify_task_access(
+        d,
+        tid,
+        AccessType.view,
+        TaskIdAccess.ReadOnly,
+        user_context_with_logged_in(None),
+        default_view_ctx,
+    )
+    if task_access.plugin.known.uploadAllowDelete is not True:
+        raise AccessDenied("Deleting uploaded files is not allowed in this task.")
+    up.delete_file(u)
+    return json_response({"deleted": up.deleted_at})
 
 
 def simple_exif_transpose(image: Image):
@@ -369,7 +597,13 @@ def _downsample_image_canvas(img_path: Path) -> None:
         img.save(img_path, format=img_format)
 
 
-def convert_pdf_or_compress_image(f: UploadedFile, u: User, d: DocInfo, task_id: str):
+def convert_pdf_or_compress_image(
+    f: UploadedFile,
+    u: User,
+    d: DocInfo,
+    task_id: str,
+    delete_after: datetime | None = None,
+):
     p = f.filesystem_path
     returninfo = []
     if f.content_mimetype.startswith("image/"):
@@ -427,7 +661,9 @@ def convert_pdf_or_compress_image(f: UploadedFile, u: User, d: DocInfo, task_id:
                 imagepath,
                 BlockType.Upload,
                 original_file=file,
-                upload_info=PluginUploadInfo(task_id_name=task_id, user=u, doc=d),
+                upload_info=PluginUploadInfo(
+                    task_id_name=task_id, user=u, doc=d, delete_after=delete_after
+                ),
             )
             uf.block.set_owner(u.get_personal_group())
             grant_access_to_session_users(uf)

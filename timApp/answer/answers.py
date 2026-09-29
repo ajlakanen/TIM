@@ -44,7 +44,7 @@ from timApp.document.viewcontext import OriginInfo
 from timApp.plugin.plugintype import PluginType, PluginTypeLazy, PluginTypeBase
 from timApp.plugin.taskid import TaskId
 from timApp.timdb.sqa import db, run_sql
-from timApp.upload.upload import get_pluginupload
+from timApp.upload.upload import find_pluginupload, upload_deleted_message
 from timApp.user.user import Consent, User
 from timApp.user.usergroup import UserGroup
 from timApp.util.answerutil import (
@@ -436,8 +436,10 @@ def get_all_answers(
                     prefix = "/uploads/"
                     if p.startswith(prefix):
                         p = p[len(prefix) :]
-                    mt, pu = get_pluginupload(p)
-                    if mt == "text/plain":
+                    pu = find_pluginupload(p)
+                    if pu.is_deleted:
+                        answ = f"ERROR: {upload_deleted_message(pu)}"
+                    elif pu.content_mimetype == "text/plain":
                         try:
                             answ = pu.data.decode()
                         except UnicodeDecodeError:

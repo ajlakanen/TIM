@@ -1,13 +1,15 @@
 import os
 import re
+from datetime import datetime
 from pathlib import Path
-from typing import Optional, NamedTuple, Union
+from typing import Any, Optional, NamedTuple, Union, Iterable
 
 import magic
 from sqlalchemy import select, Select
 from werkzeug.utils import secure_filename
 
 from timApp.answer.answer_models import AnswerUpload
+from timApp.auth.accesstype import AccessType
 from timApp.document.docentry import DocEntry
 from timApp.document.docinfo import DocInfo
 from timApp.item.block import insert_block, Block, BlockType
@@ -18,6 +20,8 @@ from timApp.timdb.exceptions import TimDbException
 from timApp.timdb.sqa import db, run_sql
 from timApp.user.user import User
 from timApp.util.file_utils import compute_file_sha1
+from timApp.util.logger import log_error, log_info
+from timApp.util.utils import get_current_time
 
 DIR_MAPPING = {
     BlockType.File: "files",
@@ -32,6 +36,8 @@ class PluginUploadInfo(NamedTuple):
     task_id_name: str
     doc: DocInfo
     user: User
+    delete_after: datetime | None = None
+    """When the file can be deleted automatically. None if the file is kept indefinitely."""
 
 
 def get_storage_path(block_type: BlockType):
@@ -249,6 +255,7 @@ class UploadedFile(ItemBase):
                 description=path.relative_to(base_path).as_posix(),
             )
             au = AnswerUpload(block=file_block)
+            au.delete_after = upload_info.delete_after
             db.session.add(au)
         else:
             file_block = insert_block(block_type=block_type, description=secured_name)
@@ -280,6 +287,257 @@ class PluginUpload(UploadedFile):
     @property
     def filename(self):
         return self.relative_filesystem_path.parts[-1]
+
+    @property
+    def url_path(self) -> str:
+        """The path of the upload as it is saved in the answers."""
+        return f"/uploads/{self.relative_filesystem_path.as_posix()}"
+
+    @property
+    def answerupload(self) -> AnswerUpload | None:
+        return self.block.answerupload.first()
+
+    @property
+    def deleted_at(self) -> datetime | None:
+        """When the file was deleted from the disk, or None if it has not been deleted."""
+        au = self.answerupload
+        return au.deleted_at if au else None
+
+    @property
+    def is_deleted(self) -> bool:
+        return self.deleted_at is not None
+
+    def is_uploader(self, user: User) -> bool:
+        """Whether the user uploaded the file, either as the logged-in user or as another user of the same session.
+
+        This is based on the rights that are set for the block at upload time (see pluginupload_file),
+        not on the answer of the upload: the answer may belong to someone else, such as a teacher
+        who has saved an answer that refers to the file.
+        """
+        group_id = user.get_personal_group().id
+        return any(
+            (group_id, access_type.value) in self.block.accesses
+            for access_type in (AccessType.owner, AccessType.manage)
+        )
+
+    @property
+    def has_forced_name(self) -> bool:
+        """Whether the file has been uploaded with a forced name (forceUploadName) so that it cannot be deleted.
+
+        Such uploads of different users share the same path and file on the disk, so the file of
+        one upload cannot be deleted without breaking the others. The path of a normal upload is
+        unique and has the form doc_id/task_name/uploader_name/number/filename, where the numbers start from 1.
+        A forced name may have the same form, so the uniqueness of the path is checked too.
+        """
+        parts = self.relative_filesystem_path.parts
+        if len(parts) != 5 or not parts[3].isdigit() or int(parts[3]) < 1:
+            return True
+        return (
+            run_sql(
+                select(Block.id)
+                .filter(
+                    (Block.description == self.block.description)
+                    & (Block.type_id == BlockType.Upload.value)
+                    & (Block.id != self.block.id)
+                )
+                .limit(1)
+            ).first()
+            is not None
+        )
+
+    def delete_file(self, deleted_by: User | None = None) -> bool:
+        """Deletes the uploaded file from the disk.
+
+        The file of an upload with a forced name is never deleted (see :attr:`has_forced_name`).
+
+        The database entries (Block, AnswerUpload and the answers) are kept so that it remains visible
+        that the file was uploaded. The answers are not modified; the deletion time is added
+        to the state of an answer when it is sent to the plugin (see :func:`add_upload_deletion_info`).
+
+        The directory of the file is kept on purpose: the running number of a new upload
+        is based on the number of existing directories (see :meth:`UploadedFile.save_new`).
+
+        The deletion is committed to the database before the file is removed. This way an interruption
+        leaves at worst an orphan file on the disk, not an upload that refers to a missing file.
+
+        :param deleted_by: The user who deleted the file. None if the file was deleted automatically.
+        :return: True if the file was deleted, False if it had already been deleted or cannot be deleted.
+        """
+        if self.has_forced_name:
+            return False
+        au = self.answerupload
+        if au is None:
+            # Early uploads may not have an AnswerUpload; create one to record the deletion.
+            au = AnswerUpload(block=self.block)
+            db.session.add(au)
+        if au.deleted_at is not None:
+            return False
+        au.deleted_at = get_current_time()
+        db.session.commit()
+        try:
+            self.filesystem_path.unlink(missing_ok=True)
+        except OSError:
+            # The file still exists, so the deletion can be tried again later.
+            au.deleted_at = None
+            db.session.commit()
+            raise
+        log_info(
+            f"{deleted_by.name if deleted_by else 'TIM'} deleted upload {self.relative_filesystem_path} "
+            f"(block {self.id})"
+        )
+        return True
+
+
+UPLOADS_URL_PREFIX = "/uploads/"
+
+# The deletion time and the automatic deletion time of each upload path (see get_upload_deletion_times)
+UploadDeletionTimes = dict[str, tuple[datetime | None, datetime | None]]
+
+
+def get_upload_paths(state: Any) -> set[str]:
+    """Gets the paths of the uploads that the content of an answer refers to.
+
+    :param state: The content of the answer.
+    :return: The paths in uploadedFiles and in the older uploadedFile.
+    """
+    if not isinstance(state, dict):
+        return set()
+    files = state.get("uploadedFiles")
+    paths = {
+        f["path"]
+        for f in (files if isinstance(files, list) else [])
+        if isinstance(f, dict) and isinstance(f.get("path"), str)
+    }
+    # Older answers refer to a single file only
+    old_file = state.get("uploadedFile")
+    if isinstance(old_file, str) and old_file:
+        paths.add(old_file)
+    return paths
+
+
+def get_upload_deletion_times(paths: Iterable[str]) -> UploadDeletionTimes:
+    """Gets the deletion times of uploads from :class:`AnswerUpload`.
+
+    :param paths: The paths of the uploads (/uploads/...).
+    :return: The deletion time and the automatic deletion time of the uploads that have either one.
+    """
+    rel_paths = {
+        p[len(UPLOADS_URL_PREFIX) :] for p in paths if p.startswith(UPLOADS_URL_PREFIX)
+    }
+    if not rel_paths:
+        return {}
+    return {
+        UPLOADS_URL_PREFIX + path: (deleted_at, delete_after)
+        for path, deleted_at, delete_after in run_sql(
+            select(
+                Block.description, AnswerUpload.deleted_at, AnswerUpload.delete_after
+            )
+            .join(AnswerUpload, AnswerUpload.upload_block_id == Block.id)
+            .filter(
+                Block.description.in_(rel_paths)
+                & (Block.type_id == BlockType.Upload.value)
+                & (
+                    (AnswerUpload.deleted_at != None)
+                    | (AnswerUpload.delete_after != None)
+                )
+            )
+        )
+    }
+
+
+def add_upload_deletion_info(
+    state: Any, deletion_times: UploadDeletionTimes | None = None
+) -> None:
+    """Adds the deletion times of the uploads to the content of an answer.
+
+    Used when the answer is sent to a plugin and when it is read as a field (see get_fields_and_users).
+    The deletion times are not saved in the answers; they are always taken from :class:`AnswerUpload`.
+    Values saved in the answer by the plugin are replaced.
+    The plugin must accept the fields "deleted" (the file has been deleted) and "deleteAfter"
+    (the file is going to be deleted automatically) in the items of uploadedFiles.
+
+    :param state: The content of the answer. Modified in place.
+    :param deletion_times: The deletion times of the uploads of the answer (see get_upload_deletion_times).
+     Fetched from the database if not given.
+    """
+    if not isinstance(state, dict):
+        return
+    if deletion_times is None:
+        deletion_times = get_upload_deletion_times(get_upload_paths(state))
+
+    def add_times(f: dict[str, Any]) -> None:
+        f.pop("deleted", None)
+        f.pop("deleteAfter", None)
+        if f["path"] not in deletion_times:
+            return
+        deleted_at, delete_after = deletion_times[f["path"]]
+        if deleted_at:
+            f["deleted"] = deleted_at.isoformat()
+        elif delete_after:
+            f["deleteAfter"] = delete_after.isoformat()
+
+    files = state.get("uploadedFiles")
+    files = [
+        f
+        for f in (files if isinstance(files, list) else [])
+        if isinstance(f, dict) and isinstance(f.get("path"), str)
+    ]
+    for f in files:
+        add_times(f)
+    # Older answers refer to a single file only
+    old_file = state.get("uploadedFile")
+    if not files and isinstance(old_file, str) and old_file in deletion_times:
+        f = {"path": old_file, "type": state.get("uploadedType", "")}
+        add_times(f)
+        state["uploadedFiles"] = [f]
+
+
+def delete_expired_uploads() -> int:
+    """Deletes the files of the uploads whose retention period (uploadRetention) has ended.
+
+    :return: The number of deleted files.
+    """
+    expired_ids = (
+        run_sql(
+            select(AnswerUpload.upload_block_id)
+            .filter(
+                (AnswerUpload.delete_after < get_current_time())
+                & (AnswerUpload.deleted_at == None)
+            )
+            .order_by(AnswerUpload.upload_block_id)
+        )
+        .scalars()
+        .all()
+    )
+    deleted = 0
+    failed = 0
+    for block_id in expired_ids:
+        # A failing upload must not prevent deleting the others, so the errors are handled one by one.
+        try:
+            au = db.session.get(AnswerUpload, block_id)
+            up = PluginUpload(au.block)
+            if up.has_forced_name:
+                # Not deletable; do not try again.
+                au.delete_after = None
+                db.session.commit()
+                was_deleted = False
+            else:
+                # Commits the deletion by itself.
+                was_deleted = up.delete_file()
+        except Exception as e:
+            db.session.rollback()
+            failed += 1
+            log_error(
+                f"Failed to delete expired upload (block {block_id}): {type(e).__name__}: {e}"
+            )
+        else:
+            if was_deleted:
+                deleted += 1
+    if failed:
+        log_error(
+            f"Deleted {deleted} expired uploads; deleting {failed} expired uploads failed"
+        )
+    return deleted
 
 
 CLASS_MAPPING = {

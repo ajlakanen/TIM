@@ -4,6 +4,7 @@ from sqlalchemy import UniqueConstraint, ForeignKey
 from sqlalchemy.orm import mapped_column, Mapped, relationship
 
 from timApp.timdb.sqa import db
+from timApp.timdb.types import datetime_tz
 
 if TYPE_CHECKING:
     from timApp.item.block import Block
@@ -28,6 +29,10 @@ class AnswerUpload(db.Model):
         ForeignKey("block.id"), primary_key=True
     )
     answer_id: Mapped[Optional[int]] = mapped_column(ForeignKey("answer.id"))
+    deleted_at: Mapped[Optional[datetime_tz]]
+    """When the uploaded file was deleted from the disk. None if the file has not been deleted."""
+    delete_after: Mapped[Optional[datetime_tz]] = mapped_column(index=True)
+    """When the uploaded file can be deleted automatically. None if the file is kept indefinitely."""
 
     block: Mapped["Block"] = relationship(back_populates="answerupload")
     answer: Mapped[Optional["Answer"]] = relationship(back_populates="uploads")

@@ -30,6 +30,11 @@ from timApp.document.viewcontext import ViewContext
 from timApp.plugin.plugin import find_task_ids, CachedPluginFinder
 from timApp.plugin.taskid import TaskId
 from timApp.timdb.sqa import run_sql
+from timApp.upload.uploadedfile import (
+    add_upload_deletion_info,
+    get_upload_deletion_times,
+    get_upload_paths,
+)
 from timApp.user.groups import verify_group_view_access
 from timApp.user.user import User, get_membership_end, get_membership_added
 from timApp.user.usergroup import UserGroup
@@ -207,6 +212,10 @@ def _parse_field(
 
     if err:
         raise RouteException(f"Invalid field format: {field_text}: {err}")
+
+
+# Fields that get the deletion times of the uploads like the plugins do (see add_upload_deletion_info)
+UPLOAD_DELETION_INFO_FIELDS = {"uploadedFiles", "ALL"}
 
 
 def get_fields_and_users(
@@ -471,6 +480,16 @@ def get_fields_and_users(
         for uid, taskid, count in answer_counts:
             counts[uid][taskid] = count
 
+    # The deletion times of the uploads are not saved in the answers, so they are fetched for all answers at once.
+    upload_task_ids = {
+        t.doc_task for t in task_ids if t.field in UPLOAD_DELETION_INFO_FIELDS
+    }
+    upload_deletion_times = get_upload_deletion_times(
+        path
+        for a in answs
+        if a.task_id in upload_task_ids
+        for path in get_upload_paths(json.loads(a.content))
+    )
     last_user = None
     user_tasks = None
     user_fieldstyles = None
@@ -530,6 +549,8 @@ def get_fields_and_users(
             if a:
                 json_str = a.content
                 p = json.loads(json_str)
+                if task.field in UPLOAD_DELETION_INFO_FIELDS:
+                    add_upload_deletion_info(p, upload_deletion_times)
                 if isinstance(p, dict):
                     style = p.get("styles")
                 if task.field == "points":

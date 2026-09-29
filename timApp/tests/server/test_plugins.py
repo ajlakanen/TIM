@@ -10,6 +10,7 @@ from lxml import html
 from lxml.html import HtmlElement
 from sqlalchemy import select, func
 
+from timApp.admin.answer_cli import answer_cli
 from timApp.answer.answer import Answer
 from timApp.answer.answer_models import AnswerUpload
 from timApp.answer.answers import get_points_by_rule, save_answer, set_test_datetime
@@ -21,6 +22,7 @@ from timApp.document.docparagraph import DocParagraph
 from timApp.document.randutils import random_id
 from timApp.document.usercontext import UserContext
 from timApp.document.viewcontext import default_view_ctx
+from timApp.item.block import Block
 from timApp.plugin.plugin import Plugin, find_plugin_from_document
 from timApp.plugin.taskid import TaskId
 from timApp.tests.db.timdbtest import (
@@ -31,7 +33,13 @@ from timApp.tests.db.timdbtest import (
     TEST_USER_2_USERNAME,
 )
 from timApp.tests.server.timroutetest import TimRouteTest
+from timApp.tim_app import app
 from timApp.timdb.sqa import db, run_sql
+from timApp.upload.uploadedfile import (
+    PluginUpload,
+    delete_expired_uploads,
+    add_upload_deletion_info,
+)
 from timApp.user.special_group_names import ANONYMOUS_USERNAME
 from timApp.user.user import User
 from timApp.user.usergroup import UserGroup
@@ -577,8 +585,730 @@ type: upload
             expect_content="Upload has not been associated with any answer; it should be re-uploaded",
         )
 
+    def test_upload_delete_file(self):
+        """Deleting an upload removes only the file; the upload and its answer remain visible as deleted."""
+        self.login_test1()
+        d = self.create_doc(
+            initial_par="""
+#- {plugin=csPlugin #testupload}
+type: upload
+        """
+        )
+        task_id = f"{d.id}.testupload"
+        url = f"/uploads/{d.id}/testupload/testuser1/1/test.txt"
+        _, ur, _ = self.do_plugin_upload(d, "test", "test.txt", task_id, "testupload")
+        # The current csPlugin saves the files as a list
+        resp = self.post_answer(
+            "csPlugin",
+            task_id,
+            {"uploadedFiles": [{"path": url, "type": "text/plain"}], "type": "upload"},
+        )
+        self.check_ok_answer(resp)
+        self.get(url)
+        # The answer report shows the content of the uploaded file.
+        report = self.get(f"/allAnswersPlain/{task_id}")
+        self.assertTrue(report.endswith("\ntest"), report)
+        self.assertNotIn("ERROR", report)
+
+        up = PluginUpload(db.session.get(Block, ur["block"]))
+        file_path = up.filesystem_path
+        self.assertTrue(file_path.exists())
+        self.assertFalse(up.is_deleted)
+        self.assertTrue(up.delete_file(self.current_user))
+        db.session.commit()
+
+        self.assertFalse(file_path.exists())
+        # The directory must remain because the numbering of the uploads is based on the directory count.
+        self.assertTrue(file_path.parent.exists())
+        up = PluginUpload(db.session.get(Block, ur["block"]))
+        self.assertTrue(up.is_deleted)
+        self.assertFalse(up.delete_file(self.current_user))
+
+        self.get(url, expect_status=410)
+        answers = (
+            run_sql(select(Answer).filter_by(task_id=task_id).order_by(Answer.id))
+            .scalars()
+            .all()
+        )
+        self.assertEqual(2, len(answers))
+        up = PluginUpload(db.session.get(Block, ur["block"]))
+        deleted_at = up.deleted_at.isoformat()
+        # The saved answers are not modified.
+        self.assertEqual(
+            {"uploadedFile": url, "uploadedType": "text/plain"},
+            json.loads(answers[0].content),
+        )
+        self.assertEqual(
+            [{"path": url, "type": "text/plain"}],
+            json.loads(answers[1].content)["uploadedFiles"],
+        )
+        # The deletion time is added to the state that is sent to the plugin,
+        # also for the older answers that refer to a single file only.
+        deleted_files = [{"path": url, "type": "text/plain", "deleted": deleted_at}]
+        for a in answers:
+            state = a.content_as_json
+            add_upload_deletion_info(state)
+            self.assertEqual(deleted_files, state["uploadedFiles"])
+            r = self.get(
+                "/getState",
+                query_string={
+                    "user_id": self.current_user_id(),
+                    "answer_id": a.id,
+                    "par_id": d.document.get_paragraphs()[0].get_id(),
+                    "doc_id": d.id,
+                },
+            )
+            plugin_json = self.get_plugin_json(html.fromstring(r["html"]))
+            self.assertEqual(deleted_files, plugin_json["uploadedFiles"])
+
+        # The answer report must not break because of the deleted file.
+        self.assertIn("was deleted on", self.get(f"/allAnswersPlain/{task_id}"))
+
+        # A new upload must not reuse the number of the deleted upload.
+        self.do_plugin_upload(
+            d, "test2", "test.txt", task_id, "testupload", expect_version=2
+        )
+        self.assertEqual(
+            "test2",
+            self.get_no_warn(f"/uploads/{d.id}/testupload/testuser1/2/test.txt"),
+        )
+
+    def test_upload_delete_route(self):
+        """Only the uploader can delete the file, and only if the task allows it."""
+        self.login_test1()
+        d = self.create_doc(
+            initial_par="""
+#- {plugin=csPlugin #deletable}
+type: upload
+uploadAllowDelete: true
+
+#- {plugin=csPlugin #answered}
+type: upload
+uploadAllowDelete: true
+
+#- {plugin=csPlugin #keep}
+type: upload
+        """
+        )
+        self.test_user_2.grant_access(d, AccessType.view)
+        db.session.commit()
+
+        self.login_test2()
+        for task in ("deletable", "answered", "keep"):
+            self.do_plugin_upload(d, "test", "test.txt", f"{d.id}.{task}", task)
+        deletable = f"/uploads/{d.id}/deletable/testuser2/1/test.txt"
+        answered = f"/uploads/{d.id}/answered/testuser2/1/test.txt"
+        keep = f"/uploads/{d.id}/keep/testuser2/1/test.txt"
+        # Saving the upload in an answer does not affect who can delete it.
+        resp = self.post_answer(
+            "csPlugin",
+            f"{d.id}.answered",
+            {
+                "uploadedFiles": [{"path": answered, "type": "text/plain"}],
+                "type": "upload",
+            },
+        )
+        self.check_ok_answer(resp)
+        au = run_sql(
+            select(AnswerUpload).filter_by(answer_id=resp["savedNew"])
+        ).scalar_one()
+        self.assertEqual(answered, f"/uploads/{au.block.description}")
+        student_answer_id = resp["savedNew"]
+        self.json_post(
+            "/uploads/delete",
+            {"path": keep},
+            expect_status=403,
+            expect_content="Deleting uploaded files is not allowed in this task.",
+        )
+
+        # Not even the owner of the document can delete the file of another user,
+        # even after saving an own answer that refers to the file.
+        self.login_test1()
+        resp = self.post_answer(
+            "csPlugin",
+            f"{d.id}.answered",
+            {
+                "uploadedFiles": [{"path": answered, "type": "text/plain"}],
+                "type": "upload",
+            },
+        )
+        self.check_ok_answer(resp)
+        self.assertNotEqual(student_answer_id, resp["savedNew"])
+        au = run_sql(
+            select(AnswerUpload).filter_by(upload_block_id=au.upload_block_id)
+        ).scalar_one()
+        self.assertEqual(student_answer_id, au.answer_id)
+        for path in (deletable, answered):
+            self.get(path)
+            self.json_post(
+                "/uploads/delete",
+                {"path": path},
+                expect_status=403,
+                expect_content="Only the user who uploaded the file can delete it.",
+            )
+            self.get(path)
+
+        # Neither can a user who is not logged in.
+        self.logout()
+        for path in (deletable, answered):
+            self.json_post(
+                "/uploads/delete",
+                {"path": path},
+                expect_status=403,
+                expect_content="Only the user who uploaded the file can delete it.",
+            )
+
+        self.login_test2()
+        self.json_post("/uploads/delete", {"path": deletable + "x"}, expect_status=404)
+        for path in (deletable, answered):
+            self.get(path)
+            r = self.json_post("/uploads/delete", {"path": path})
+            self.assertIsNotNone(r["deleted"])
+            self.get(path, expect_status=410)
+        self.get(keep)
+
+    def test_upload_delete_group_session(self):
+        """All the users of the session that uploaded the file can delete it, also later on their own."""
+        self.login_test1()
+        d = self.create_doc(
+            initial_par="""
+#- {plugin=csPlugin #t}
+type: upload
+uploadAllowDelete: true
+        """
+        )
+        for u in (self.test_user_2, self.test_user_3):
+            u.grant_access(d, AccessType.view)
+        db.session.commit()
+
+        self.login_test2()
+        self.login_test1(add=True)
+        paths = [
+            self.do_plugin_upload(
+                d, "test", "test.txt", f"{d.id}.t", "t", expect_version=i
+            )[1]["file"]
+            for i in (1, 2, 3)
+        ]
+
+        def delete(path: str, **kwargs):
+            return self.json_post("/uploads/delete", {"path": path}, **kwargs)
+
+        # The session that uploaded the file
+        self.assertIsNotNone(delete(paths[0])["deleted"])
+        self.get(paths[0], expect_status=410)
+
+        # A user outside the session
+        self.login_test3()
+        for path in paths[1:]:
+            delete(
+                path,
+                expect_status=403,
+                expect_content="Only the user who uploaded the file can delete it.",
+            )
+
+        # The other user of the upload session alone
+        self.login_test1()
+        self.assertIsNotNone(delete(paths[1])["deleted"])
+        self.get(paths[1], expect_status=410)
+
+        # A user of the upload session as an added user of a session of someone else
+        self.login_test3()
+        self.login_test2(add=True)
+        self.assertIsNotNone(delete(paths[2])["deleted"])
+        self.login_test2()
+        self.get(paths[2], expect_status=410)
+
+    def test_upload_unsaved(self):
+        """An upload that is never saved in an answer is deleted after a short time."""
+        self.login_test1()
+        d = self.create_doc(
+            initial_par="""
+#- {plugin=csPlugin #expiring}
+type: upload
+uploadRetention: 30
+
+#- {plugin=csPlugin #keep}
+type: upload
+        """
+        )
+
+        def upload(task: str, version: int, save_answer: bool) -> AnswerUpload:
+            _, ur, _ = self.do_plugin_upload(
+                d,
+                "test",
+                "test.txt",
+                f"{d.id}.{task}",
+                task,
+                expect_version=version,
+                save_answer=save_answer,
+            )
+            return db.session.get(AnswerUpload, ur["block"])
+
+        def days_left(au: AnswerUpload) -> float:
+            return (au.delete_after - get_current_time()).total_seconds() / 86400
+
+        # Saving the answer "fails": the uploads are not posted as an answer.
+        unsaved = [upload("expiring", 1, False), upload("keep", 1, False)]
+        for au in unsaved:
+            self.assertIsNone(au.answer_id)
+            self.assertAlmostEqual(1, days_left(au), places=1)
+        # Saving the upload in an answer replaces the short retention period with the one of the task.
+        self.assertAlmostEqual(30, days_left(upload("expiring", 2, True)), places=1)
+        saved_keep = upload("keep", 2, True)
+        self.assertIsNone(saved_keep.delete_after)
+
+        self.assertEqual(0, delete_expired_uploads())
+        for block_id in [au.upload_block_id for au in unsaved]:
+            au = db.session.get(AnswerUpload, block_id)
+            au.delete_after = get_current_time() - timedelta(minutes=1)
+        db.session.commit()
+        self.assertEqual(2, delete_expired_uploads())
+        self.get(f"/uploads/{saved_keep.block.description}")
+
+        # A deleted upload cannot be saved in an answer anymore.
+        path = f"/uploads/{d.id}/keep/testuser1/1/test.txt"
+        self.get(path, expect_status=410)
+        self.post_answer(
+            "csPlugin",
+            f"{d.id}.keep",
+            {"uploadedFiles": [{"path": path, "type": "text/plain"}], "type": "upload"},
+            expect_status=400,
+            expect_content="The uploaded file test.txt has been deleted "
+            "and cannot be saved in an answer. Upload the file again.",
+        )
+
+    def test_upload_unsaved_in_text(self):
+        """An upload that is referred to only in the answer text is saved in the answer."""
+        self.login_test1()
+        d = self.create_doc(
+            initial_par="""
+#- {plugin=csPlugin #images}
+type: text
+uploadRetention: 30
+
+#- {plugin=csPlugin #other}
+type: text
+        """
+        )
+
+        def upload(task: str, version: int) -> dict:
+            _, ur, _ = self.do_plugin_upload(
+                d,
+                "test",
+                "test.txt",
+                f"{d.id}.{task}",
+                task,
+                expect_version=version,
+                save_answer=False,
+            )
+            return ur
+
+        in_text = upload("images", 1)
+        in_list = upload("images", 2)
+        unused = upload("images", 3)
+        other_task = upload("other", 1)
+        self.test_user_2.grant_access(d, AccessType.view)
+        db.session.commit()
+        self.login_test2()
+        other_user = upload("images", 1)
+        self.login_test1()
+        resp = self.post_answer(
+            "csPlugin",
+            f"{d.id}.images",
+            {
+                "usercode": f"![Image 1]({in_text['file']}) ![Image 2]({in_list['file']}) "
+                f"{other_task['file']} {other_user['file']} {unused['file']}.bak",
+                "uploadedFiles": [{"path": in_list["file"], "type": "text/plain"}],
+                "type": "text",
+            },
+        )
+        self.check_ok_answer(resp)
+
+        def get_au(ur: dict) -> AnswerUpload:
+            return db.session.get(AnswerUpload, ur["block"])
+
+        for ur in (in_text, in_list):
+            au = get_au(ur)
+            self.assertEqual(resp["savedNew"], au.answer_id)
+            days_left = (au.delete_after - get_current_time()).total_seconds() / 86400
+            self.assertAlmostEqual(30, days_left, places=1)
+        # The uploads of other tasks and users and the partial matches of a path are not saved in the answer.
+        for ur in (unused, other_task, other_user):
+            au = get_au(ur)
+            self.assertIsNone(au.answer_id)
+            days_left = (au.delete_after - get_current_time()).total_seconds() / 86400
+            self.assertAlmostEqual(1, days_left, places=1)
+
+    def test_upload_retention(self):
+        """Uploads of a task with uploadRetention are deleted after the retention period."""
+        self.login_test1()
+        d = self.create_doc(
+            initial_par="""
+#- {plugin=csPlugin #expiring}
+type: upload
+uploadRetention: 30
+
+#- {plugin=csPlugin #keep}
+type: upload
+        """
+        )
+        _, expiring, _ = self.do_plugin_upload(
+            d, "test", "test.txt", f"{d.id}.expiring", "expiring"
+        )
+        _, keep, _ = self.do_plugin_upload(
+            d, "test", "test.txt", f"{d.id}.keep", "keep"
+        )
+        self.assertNotIn("deleteAfter", keep)
+        au_keep = db.session.get(AnswerUpload, keep["block"])
+        self.assertIsNone(au_keep.delete_after)
+        au = db.session.get(AnswerUpload, expiring["block"])
+        self.assertEqual(
+            au.delete_after, dateutil.parser.parse(expiring["deleteAfter"])
+        )
+        days_left = (au.delete_after - get_current_time()).total_seconds() / 86400
+        self.assertAlmostEqual(30, days_left, places=1)
+
+        # The deletion times are always taken from the database, not from the answer.
+        resp = self.post_answer(
+            "csPlugin",
+            f"{d.id}.expiring",
+            {
+                "uploadedFiles": [
+                    {
+                        "path": expiring["file"],
+                        "type": "text/plain",
+                        "deleteAfter": "2000-01-01T00:00:00+00:00",
+                        "deleted": "2000-01-01T00:00:00+00:00",
+                    }
+                ],
+                "type": "upload",
+            },
+        )
+        self.check_ok_answer(resp)
+
+        def get_rendered_files() -> list[dict]:
+            r = self.get(
+                "/getState",
+                query_string={
+                    "user_id": self.current_user_id(),
+                    "answer_id": resp["savedNew"],
+                    "par_id": d.document.get_paragraphs()[0].get_id(),
+                    "doc_id": d.id,
+                },
+            )
+            return self.get_plugin_json(html.fromstring(r["html"]))["uploadedFiles"]
+
+        au.delete_after = get_current_time() + timedelta(days=60)
+        db.session.commit()
+        au = db.session.get(AnswerUpload, expiring["block"])
+        files = get_rendered_files()
+        self.assertEqual(1, len(files))
+        self.assertEqual(
+            {"path", "type", "deleteAfter"}, set(files[0].keys()), files[0]
+        )
+        self.assertEqual(
+            au.delete_after, dateutil.parser.parse(files[0]["deleteAfter"])
+        )
+
+        self.assertEqual(0, delete_expired_uploads())
+        self.get(expiring["file"])
+
+        au = db.session.get(AnswerUpload, expiring["block"])
+        au.delete_after = get_current_time() - timedelta(minutes=1)
+        db.session.commit()
+        self.assertEqual(1, delete_expired_uploads())
+        self.assertEqual(0, delete_expired_uploads())
+        self.get(expiring["file"], expect_status=410)
+        self.get(keep["file"])
+        au = db.session.get(AnswerUpload, expiring["block"])
+        files = get_rendered_files()
+        self.assertEqual({"path", "type", "deleted"}, set(files[0].keys()), files[0])
+        self.assertEqual(au.deleted_at, dateutil.parser.parse(files[0]["deleted"]))
+
+    def test_upload_deletion_info_in_fields(self):
+        """Fields that refer to uploads get the deletion times from the database, like the plugins."""
+        self.login_test1()
+        d = self.create_doc(
+            initial_par="""
+#- {plugin=csPlugin #deleted}
+type: upload
+
+#- {plugin=csPlugin #expiring}
+type: upload
+uploadRetention: 30
+
+#- {plugin=textfield #out}
+
+#- {#r plugin=jsrunner}
+group: testuser1
+fields:
+ - deleted.uploadedFiles=d
+ - expiring.ALL=e
+ - out
+program: |!!
+tools.setString("out", JSON.stringify([tools.getValue("d", null), tools.getValue("e", null)]));
+!!
+        """
+        )
+        # An older answer that refers to a single file only
+        _, deleted, _ = self.do_plugin_upload(
+            d, "test", "test.txt", f"{d.id}.deleted", "deleted"
+        )
+        self.assertTrue(
+            PluginUpload(db.session.get(Block, deleted["block"])).delete_file()
+        )
+        _, expiring, _ = self.do_plugin_upload(
+            d, "test", "test.txt", f"{d.id}.expiring", "expiring", save_answer=False
+        )
+        # The times saved in the answer are replaced.
+        resp = self.post_answer(
+            "csPlugin",
+            f"{d.id}.expiring",
+            {
+                "uploadedFiles": [
+                    {
+                        "path": expiring["file"],
+                        "type": "text/plain",
+                        "deleted": "2000-01-01T00:00:00+00:00",
+                    }
+                ],
+                "type": "upload",
+            },
+        )
+        self.check_ok_answer(resp)
+
+        self.post_answer("jsrunner", f"{d.id}.r", user_input={})
+        out = run_sql(select(Answer).filter_by(task_id=f"{d.id}.out")).scalars().one()
+        deleted_files, expiring_all = json.loads(json.loads(out.content)["c"])
+        au_deleted = db.session.get(AnswerUpload, deleted["block"])
+        au_expiring = db.session.get(AnswerUpload, expiring["block"])
+        self.assertEqual(1, len(deleted_files))
+        self.assertEqual(
+            {"path", "type", "deleted"}, set(deleted_files[0].keys()), deleted_files
+        )
+        self.assertEqual(deleted["file"], deleted_files[0]["path"])
+        self.assertEqual(
+            au_deleted.deleted_at, dateutil.parser.parse(deleted_files[0]["deleted"])
+        )
+        expiring_files = expiring_all["uploadedFiles"]
+        self.assertEqual(1, len(expiring_files))
+        self.assertEqual(
+            {"path", "type", "deleteAfter"},
+            set(expiring_files[0].keys()),
+            expiring_files,
+        )
+        self.assertEqual(
+            au_expiring.delete_after,
+            dateutil.parser.parse(expiring_files[0]["deleteAfter"]),
+        )
+
+    def test_upload_retention_invalid(self):
+        """Only a positive integer is a retention period; the uploads of other tasks are kept."""
+        self.login_test1()
+        values = {"bool": "true", "negative": "-5", "zero": "0", "null": "null"}
+        d = self.create_doc(
+            initial_par="".join(
+                f"""
+#- {{plugin=csPlugin #{task}}}
+type: upload
+uploadRetention: {value}
+"""
+                for task, value in values.items()
+            )
+        )
+        for task in values:
+            _, ur, _ = self.do_plugin_upload(
+                d, "test", "test.txt", f"{d.id}.{task}", task
+            )
+            self.assertNotIn("deleteAfter", ur)
+            self.assertIsNone(db.session.get(AnswerUpload, ur["block"]).delete_after)
+
+    def test_upload_retention_failure(self):
+        """An upload whose deletion fails does not prevent deleting the other expired uploads."""
+        self.login_test1()
+        d = self.create_doc(
+            initial_par="""
+#- {plugin=csPlugin #expiring}
+type: upload
+uploadRetention: 30
+        """
+        )
+        uploads = [
+            self.do_plugin_upload(
+                d,
+                "test",
+                "test.txt",
+                f"{d.id}.expiring",
+                "expiring",
+                expect_version=version,
+            )[1]
+            for version in (1, 2, 3)
+        ]
+        for ur in uploads:
+            au = db.session.get(AnswerUpload, ur["block"])
+            au.delete_after = get_current_time() - timedelta(minutes=1)
+        db.session.commit()
+        # Deleting the first upload fails because its path is a directory.
+        broken_path = PluginUpload(
+            db.session.get(Block, uploads[0]["block"])
+        ).filesystem_path
+        broken_path.unlink()
+        broken_path.mkdir()
+
+        self.assertEqual(2, delete_expired_uploads())
+        self.assertIsNone(db.session.get(AnswerUpload, uploads[0]["block"]).deleted_at)
+        for ur in uploads[1:]:
+            self.get(ur["file"], expect_status=410)
+        # The failed upload is tried again the next time.
+        broken_path.rmdir()
+        broken_path.write_text("test")
+        self.assertEqual(1, delete_expired_uploads())
+        self.get(uploads[0]["file"], expect_status=410)
+
+    def test_upload_forced_name_not_deleted(self):
+        """Uploads with a forced name share the file, so it is never deleted."""
+        self.login_test1()
+        d = self.create_doc(
+            initial_par="""
+#- {plugin=csPlugin #forced}
+type: upload
+uploadAllowDelete: true
+uploadRetention: 30
+        """
+        )
+        self.test_user_2.grant_access(d, AccessType.view)
+        db.session.commit()
+        path = f"/uploads/{d.id}/forced/0/0/fixed.txt"
+        # The path looks like a normal one, but two users upload to it.
+        normal_like = f"/uploads/{d.id}/forced/shared/1/fixed.txt"
+        blocks = []
+        for login, content in (
+            (self.login_test1, "first"),
+            (self.login_test2, "second"),
+        ):
+            login()
+            for name, expected in (("fixed", path), ("shared/1/fixed", normal_like)):
+                ur = self.post(
+                    f"/pluginUpload/{d.id}/forced/",
+                    query_string={"forceUploadName": name},
+                    data={"file": (io.BytesIO(content.encode()), "test.txt")},
+                )
+                self.assertEqual(expected, ur[0]["file"])
+                self.assertNotIn("deleteAfter", ur[0])
+                blocks.append(ur[0]["block"])
+            if content != "first":
+                # Another user cannot save an answer that refers to the shared path.
+                continue
+            resp = self.post_answer(
+                "csPlugin",
+                f"{d.id}.forced",
+                {
+                    "uploadedFiles": [
+                        {"path": path, "type": "text/plain"},
+                        {"path": normal_like, "type": "text/plain"},
+                    ],
+                    "type": "upload",
+                },
+            )
+            self.check_ok_answer(resp)
+
+        for login in (self.login_test1, self.login_test2):
+            login()
+            for p in (path, normal_like):
+                self.json_post(
+                    "/uploads/delete",
+                    {"path": p},
+                    expect_status=403,
+                    expect_content="Files uploaded with a forced name cannot be deleted.",
+                )
+        self.login_test1()
+        for p in (path, normal_like):
+            self.assertEqual("second", self.get(p))
+
+        for block_id in blocks:
+            au = db.session.get(AnswerUpload, block_id)
+            au.delete_after = get_current_time() - timedelta(minutes=1)
+        db.session.commit()
+        self.assertEqual(0, delete_expired_uploads())
+        for block_id in blocks:
+            au = db.session.get(AnswerUpload, block_id)
+            self.assertIsNone(au.delete_after)
+            self.assertIsNone(au.deleted_at)
+
+        result = app.test_cli_runner().invoke(
+            answer_cli,
+            ["delete-uploads", d.path, "--older-than", "0", "--no-dry-run"],
+            catch_exceptions=False,
+        )
+        self.assertIn("Total: 0 files", result.output)
+        self.assertIn(f"Skipping {d.id}/forced/0/0/fixed.txt", result.output)
+        for p in (path, normal_like):
+            self.assertEqual("second", self.get(p))
+
+    def test_upload_delete_cli(self):
+        self.login_test1()
+        d = self.create_doc(
+            initial_par="""
+#- {plugin=csPlugin #testupload}
+type: upload
+        """
+        )
+        _, ur, _ = self.do_plugin_upload(
+            d, "test", "test.txt", f"{d.id}.testupload", "testupload"
+        )
+        runner = app.test_cli_runner()
+
+        def run_delete(*args: str) -> str:
+            result = runner.invoke(
+                answer_cli, ["delete-uploads", d.path, *args], catch_exceptions=False
+            )
+            self.assertEqual(0, result.exit_code, result.output)
+            return result.output
+
+        self.assertIn("Total: 0 files", run_delete("--older-than", "1", "--no-dry-run"))
+        # Dry run is the default.
+        self.assertIn("Total: 1 files", run_delete("--older-than", "0"))
+        self.get(ur["file"])
+        self.assertIn("Total: 1 files", run_delete("--older-than", "0", "--no-dry-run"))
+        self.get(ur["file"], expect_status=410)
+        self.assertIn("Total: 0 files", run_delete("--older-than", "0", "--no-dry-run"))
+
+        # A failing deletion is not marked in the database and does not prevent deleting the other files.
+        broken, ok = [
+            self.do_plugin_upload(
+                d,
+                "test",
+                "test.txt",
+                f"{d.id}.testupload",
+                "testupload",
+                expect_version=version,
+            )[1]
+            for version in (2, 3)
+        ]
+        broken_path = PluginUpload(
+            db.session.get(Block, broken["block"])
+        ).filesystem_path
+        broken_path.unlink()
+        broken_path.mkdir()
+        output = run_delete("--older-than", "0", "--no-dry-run")
+        self.assertIn("Total: 1 files", output)
+        self.assertIn("Failed to delete 1 files", output)
+        self.get(ok["file"], expect_status=410)
+        db.session.expire_all()
+        self.assertIsNone(db.session.get(AnswerUpload, broken["block"]).deleted_at)
+        # A missing file that has not been marked as deleted is not an internal error.
+        broken_path.rmdir()
+        self.get(broken["file"], expect_status=404)
+
     def do_plugin_upload(
-        self, d: DocInfo, file_content, filename, task_id, task_name, expect_version=1
+        self,
+        d: DocInfo,
+        file_content,
+        filename,
+        task_id,
+        task_name,
+        expect_version=1,
+        save_answer=True,
     ):
         ur = self.post(
             f"/pluginUpload/{d.id}/{task_name}/",
@@ -588,22 +1318,24 @@ type: upload
             expect_status=200,
         )
         mimetype = "text/plain"
-        self.assertDictEqual(
-            {
-                "file": f"/uploads/{d.id}/{task_name}/{self.current_user.name}/{expect_version}/{filename}",
-                "type": mimetype,
-                "block": ur[0]["block"],
-            },
-            ur[0],
-        )
+        expected = {
+            "file": f"/uploads/{d.id}/{task_name}/{self.current_user.name}/{expect_version}/{filename}",
+            "type": mimetype,
+            "block": ur[0]["block"],
+        }
+        # Present only in the tasks that have uploadRetention
+        if "deleteAfter" in ur[0]:
+            expected["deleteAfter"] = ur[0]["deleteAfter"]
+        self.assertDictEqual(expected, ur[0])
         self.assertIsInstance(ur[0]["block"], int)
         user_input = {
             "uploadedFile": ur[0]["file"],
             "uploadedType": mimetype,
             "type": "upload",
         }
-        resp = self.post_answer("csPlugin", task_id, user_input)
-        self.check_ok_answer(resp)
+        if save_answer:
+            resp = self.post_answer("csPlugin", task_id, user_input)
+            self.check_ok_answer(resp)
         return mimetype, ur[0], user_input
 
     def check_failed_answer(self, resp, is_new=False):
