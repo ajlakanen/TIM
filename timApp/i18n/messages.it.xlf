@@ -11586,20 +11586,20 @@ Separate multiple addresses with commas or write each address on a new line.</so
           <context context-type="linenumber">71,72</context>
         </context-group>
       </trans-unit>
-      <trans-unit id="7881130305660917317" datatype="html">
-        <source>You are not logged in. You can read the material, but answering the tasks requires logging in.</source>
-        <target state="translated">Non hai effettuato l'accesso. Puoi leggere il materiale, ma per rispondere ai compiti devi accedere.</target>
-        <context-group purpose="location">
-          <context context-type="sourcefile">static/scripts/tim/user/login-required-banner.component.ts</context>
-          <context context-type="linenumber">16</context>
-        </context-group>
-      </trans-unit>
       <trans-unit id="4307731295930814407" datatype="html">
         <source>Show anyway</source>
         <target state="translated">Mostra comunque</target>
         <context-group purpose="location">
           <context context-type="sourcefile">static/scripts/tim/plugin/plugin-loader.component.ts</context>
           <context context-type="linenumber">80,81</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="157260800495787141" datatype="html">
+        <source>You can read the material, but using the interactive components requires logging in.</source>
+        <target state="translated">Puoi leggere il materiale, ma per usare i componenti interattivi devi accedere.</target>
+        <context-group purpose="location">
+          <context context-type="sourcefile">static/scripts/tim/user/login-required-banner.component.ts</context>
+          <context context-type="linenumber">20</context>
         </context-group>
       </trans-unit>
     </body>

@@ -33,13 +33,37 @@ class LoginRequiredNoticeTest(BrowserTest):
         self.goto_document(d)
         banners = self.drv.find_elements(By.CSS_SELECTOR, ".login-required-banner")
         self.assertEqual(1, len(banners))
-        self.assertIn("You are not logged in.", banners[0].text)
+        self.assertIn("You can read the material", banners[0].text)
         login = self.find_element_avoid_staleness(
             "tim-plugin-loader .login-required-lock .login-required-login"
         )
         self.assertIn("Log in to answer", login.text)
         login.click()
         self.wait_until_present_and_vis("tim-login-dialog")
+
+    def test_banner_can_be_closed(self):
+        d = self.create_public_doc(CS_TASK)
+        self.drv.delete_all_cookies()
+        self.goto_document(d)
+        banner = self.find_element_avoid_staleness(".login-required-banner")
+        self.assertGreater(banner.size["height"], 0)
+        card_top_before = self.drv.execute_script(
+            "return getComputedStyle(document.querySelector("
+            "'tim-plugin-loader .login-required-overlay .login-required-card')).top"
+        )
+        # The locked task's sticky card keeps clear of the sticky banner.
+        self.assertGreater(float(card_top_before.rstrip("px")), banner.size["height"])
+        banner.find_element(By.CSS_SELECTOR, ".login-required-banner-close").click()
+        self.should_not_exist(".login-required-banner")
+        card_top_after = self.drv.execute_script(
+            "return getComputedStyle(document.querySelector("
+            "'tim-plugin-loader .login-required-overlay .login-required-card')).top"
+        )
+        self.assertLess(
+            float(card_top_after.rstrip("px")), float(card_top_before.rstrip("px"))
+        )
+        # The task stays locked; only the notice is gone.
+        self.find_element_avoid_staleness("tim-plugin-loader .login-required-lock")
 
     def test_logged_in_user_sees_no_banner_or_lock(self):
         d = self.create_public_doc(PALI_TASK)

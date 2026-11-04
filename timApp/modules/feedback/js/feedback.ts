@@ -642,7 +642,7 @@ export class FeedbackPluginComponent
                 }
                 const success = await this.savePlugin(instructionQuestion);
                 if (!success) {
-                    this.error = "Error saving a plugin";
+                    this.error ||= "Error saving a plugin";
                     return;
                 }
                 if (!this.teacherRight || this.editMode == null) {
@@ -659,7 +659,8 @@ export class FeedbackPluginComponent
                 }
                 const result = await this.doSave(false, false, "", "");
                 if (!result.saved) {
-                    this.error = "Error saving a plugin";
+                    // doSave has already stored the server's message (e.g. that the viewer must log in), if any.
+                    this.error ||= "Error saving a plugin";
                     return;
                 }
             }

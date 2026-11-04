@@ -147,6 +147,8 @@ export class MultisaveComponent
     listener = false;
     timer?: number;
     saveMessages: string[] = [];
+    // Whether every target of the last findTargetTasks() was behind the login veil (see save()).
+    private allTargetsBehindLoginVeil = false;
 
     constructor(
         el: ElementRef<HTMLElement>,
@@ -293,7 +295,14 @@ export class MultisaveComponent
         ) {
             targets = this.vctrl.getAllTimComponents();
         }
-        return targets;
+        // A task behind the login veil is inert, so it cannot have been changed, and saving it
+        // would only make the task show the login error far away from this button.
+        const visibleTargets = targets.filter(
+            (c) => !this.vctrl.isBehindLoginVeil(c)
+        );
+        this.allTargetsBehindLoginVeil =
+            targets.length > 0 && visibleTargets.length === 0;
+        return visibleTargets;
     }
 
     /**
@@ -306,6 +315,11 @@ export class MultisaveComponent
      */
     async save() {
         const componentsToSave = this.findTargetTasks();
+        if (this.allTargetsBehindLoginVeil) {
+            // Same text (and translation) as the lock card of a locked task.
+            this.saveMessages = [$localize`Log in to answer`];
+            return;
+        }
 
         const promises = [];
         for (const v of componentsToSave) {

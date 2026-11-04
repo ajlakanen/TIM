@@ -1852,6 +1852,21 @@ export class ViewCtrl implements IController {
         return this.ldrs.get(taskId);
     }
 
+    /**
+     * Whether the task of the component is covered by the login veil (see PluginLoaderComponent.isVeiled):
+     * the viewer is not logged in and could not answer it. Such a component is inert, so it cannot have
+     * been changed by the viewer either.
+     */
+    isBehindLoginVeil(component: ITimComponent): boolean {
+        const tid = component.getTaskId();
+        if (!tid) {
+            return false;
+        }
+        return (
+            this.getPluginLoader(tid.docTask().toString())?.isVeiled() ?? false
+        );
+    }
+
     getPluginLoaderWithoutTaskid(parId: string) {
         return this.loadersWithoutTaskIds.get(parId);
     }

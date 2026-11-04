@@ -1630,6 +1630,13 @@ tim-rights-editor {
 tim-plugin-loader.login-required-locked[wrapper="div"] {
   position: relative;
   display: block;
+  // At least as tall as the card and the veil's padding, so that the card of a short
+  // plugin (e.g. a lazy placeholder) does not overflow onto the next paragraph.
+  min-height: 5.5em;
+  // Plugins without a margin of their own (lazy placeholders, qst, fields, ...) sit flush
+  // against each other, and their veils would merge into one. The margin collapses with
+  // the plugin's own bottom margin, so e.g. csPlugin panels do not get extra space.
+  margin-bottom: 1.5em;
 }
 
 tim-plugin-loader.login-required-locked[wrapper="span"] {
@@ -1720,10 +1727,11 @@ tim-plugin-loader .login-required-overlay {
   background: rgba(205, 209, 216, 0.6);
 
   .login-required-card {
-    // Sticky so that the card stays in view in tasks taller than the viewport;
-    // the offset leaves room for the sticky document banner above.
+    // Sticky so that the card stays in view in tasks taller than the viewport.
+    // The offset leaves room for the sticky document banner above; its height is
+    // published by tim-login-required-banner and is 0 when the banner is closed.
     position: sticky;
-    top: 4.5em;
+    top: calc(var(--login-required-banner-height, 0px) + 1em);
     box-shadow: 0 4px 18px rgba(0, 0, 0, 0.15);
   }
 }
@@ -1755,6 +1763,20 @@ tim-plugin-loader .login-required-bar {
   gap: 0.5em 0.75em;
   margin-bottom: 1em;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+
+  // The login button and the close cross stay together on one line, so that the
+  // cross does not wrap onto a row of its own and make the notice taller.
+  .login-required-banner-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.75em;
+    white-space: nowrap;
+  }
+
+  .login-required-banner-close {
+    // Bootstrap's .close floats right; here it is a flex item next to the button.
+    float: none;
+  }
 }
 
 .modal-bg {
