@@ -649,6 +649,7 @@ def pluginify(
         try:
             reqs = json.loads(resp)
             plugin.can_give_task = reqs.get("canGiveTask", False)
+            plugin.answerable = reqs.get("answerable", True)
             if plugin_name == "mmcq" or plugin_name == "mcq":
                 reqs["multihtml"] = True
                 reqs["multimd"] = True

@@ -11556,6 +11556,38 @@ Separate multiple addresses with commas or write each address on a new line.</so
           <context context-type="linenumber">313,312</context>
         </context-group>
       </trans-unit>
+      <trans-unit id="5698711197357941139" datatype="html">
+        <source>Log in to answer this task.</source>
+        <target state="translated">Inicia sesión para responder a esta tarea.</target>
+        <context-group purpose="location">
+          <context context-type="sourcefile">static/scripts/tim/plugin/plugin-loader.component.ts</context>
+          <context context-type="linenumber">63,64</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="6368695462385779892" datatype="html">
+        <source>Log in to answer</source>
+        <target state="translated">Inicia sesión para responder</target>
+        <context-group purpose="location">
+          <context context-type="sourcefile">static/scripts/tim/plugin/plugin-loader.component.ts</context>
+          <context context-type="linenumber">71,72</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="7881130305660917317" datatype="html">
+        <source>You are not logged in. You can read the material, but answering the tasks requires logging in.</source>
+        <target state="translated">No has iniciado sesión. Puedes leer el material, pero para responder a las tareas debes iniciar sesión.</target>
+        <context-group purpose="location">
+          <context context-type="sourcefile">static/scripts/tim/user/login-required-banner.component.ts</context>
+          <context context-type="linenumber">16</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="4307731295930814407" datatype="html">
+        <source>Show anyway</source>
+        <target state="translated">Mostrar de todos modos</target>
+        <context-group purpose="location">
+          <context context-type="sourcefile">static/scripts/tim/plugin/plugin-loader.component.ts</context>
+          <context context-type="linenumber">80,81</context>
+        </context-group>
+      </trans-unit>
     </body>
   </file>
 </xliff>

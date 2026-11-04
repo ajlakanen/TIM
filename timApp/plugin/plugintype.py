@@ -29,6 +29,11 @@ class PluginTypeBase:
         plugin_class = timApp.plugin.containerLink.get_plugin(self.get_type())  # type: ignore[attr-defined]
         return plugin_class.can_give_task
 
+    def answerable(self) -> bool:
+        """Whether the plugin ever sends answers (reqs key "answerable", default True)."""
+        plugin_class = timApp.plugin.containerLink.get_plugin(self.get_type())  # type: ignore[attr-defined]
+        return plugin_class.answerable
+
     def to_json(self) -> dict[str, Any]:
         return {"type": self.get_type()}
 

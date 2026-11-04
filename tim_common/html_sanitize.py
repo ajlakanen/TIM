@@ -215,6 +215,7 @@ TIM_SAFE_ATTRS = frozenset(
         "json",
         "plugin-type",
         "eagerly-load-state",
+        "login-required",
         "data-answer-id",
         "answer-id",
         "task-id",

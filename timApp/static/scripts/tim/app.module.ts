@@ -19,6 +19,7 @@ import {LogoComponent} from "tim/ui/logo.component";
 import {BsDropdownModule} from "ngx-bootstrap/dropdown";
 import {setTheme} from "ngx-bootstrap/utils";
 import {LoginMenuComponent} from "tim/user/login-menu.component";
+import {LoginRequiredBannerComponent} from "tim/user/login-required-banner.component";
 import {FrontPageComponent} from "tim/frontpage/front-page.component";
 import {BookmarkFolderBoxComponent} from "tim/bookmark/bookmark-folder-box.component";
 import {SiteHeaderComponent} from "tim/header/site-header.component";
@@ -57,6 +58,7 @@ import {RoleInfoComponent} from "tim/header/role-info.component";
         UserMenuComponent,
         LogoComponent,
         LoginMenuComponent,
+        LoginRequiredBannerComponent,
         FrontPageComponent,
         BookmarkFolderBoxComponent,
         SiteHeaderComponent,

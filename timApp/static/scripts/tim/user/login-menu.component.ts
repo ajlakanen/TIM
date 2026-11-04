@@ -57,7 +57,7 @@ export class LoginMenuComponent implements OnInit {
             );
             return;
         }
-        void showLoginDialog({showSignup: false, addingToSession: false});
+        void showLoginDialog();
     }
 
     ngOnInit() {

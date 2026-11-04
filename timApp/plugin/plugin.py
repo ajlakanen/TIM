@@ -705,6 +705,26 @@ class Plugin:
             </div>
         """
 
+    def login_required_to_answer(self) -> bool:
+        """Whether the current viewer must log in before answering this task.
+
+        The answer route rejects answers from users who are not logged in unless the
+        plugin markup has ``anonymous: true``. The plugin loader uses this to show a
+        "log in to answer" notice before the user tries to answer. Plugins that never
+        send answers (reqs key ``answerable: false``, e.g. timMenu or showVideo) are
+        not locked even if they have a task id.
+        """
+        if not self.task_id:
+            return False
+        if self.known.anonymous or not self.options:
+            return False
+        if self.options.user_ctx.logged_user.logged_in:
+            return False
+        try:
+            return self.ptype.answerable()
+        except PluginException:
+            return False
+
     def get_final_output(self):
         out = self.output
         if self.is_lazy() and out.find(LAZYSTART) < 0 and out.find(NOLAZY) < 0:
@@ -729,6 +749,9 @@ class Plugin:
         eager_load_state_opt = ""
         if self.known.eagerlyLoadState:
             eager_load_state_opt = 'eagerly-load-state="true"'
+        login_required_opt = ""
+        if self.login_required_to_answer():
+            login_required_opt = 'login-required="true"'
         html_task_id = (
             self.task_id.extended_or_doc_task if self.task_id else self.fake_task_id
         )
@@ -761,6 +784,7 @@ class Plugin:
                     f'plugin-type="/{self.type}" '
                     f'task-id="{doc_task_id or ""}" '
                     f"{eager_load_state_opt} "
+                    f"{login_required_opt} "
                     f"""{'preview="true"' if self.options.preview else ""}>"""
                     f"{cont}"
                     "</tim-plugin-loader>",

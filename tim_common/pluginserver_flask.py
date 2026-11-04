@@ -80,6 +80,9 @@ class PluginReqs(TypedDict, total=False):
     multimd: bool
     editor_tabs: list[EditorTab]
     css: list[str]
+    # False for plugins that never send answers (e.g. timMenu, showVideo) even if they have a
+    # task id; TIM then does not ask users who are not logged in to log in before answering.
+    answerable: bool
 
 
 @dataclass
@@ -159,7 +162,8 @@ class GenericHtmlModel(GenericRouteModel[PluginInput, PluginMarkup, PluginState]
 
     def requires_login(self) -> bool:
         """
-        Whether the login prompt is shown to anonymous users.
+        Whether users who are not logged in cannot answer the plugin. The Markdown output then
+        renders only a static version of the plugin for them.
         """
         return not self.markup.anonymous
 
@@ -288,16 +292,15 @@ The following fields have invalid values:
     )
 
 
-def render_plugin_with_login_request(
+def render_plugin_static(
     m: GenericHtmlModel[PluginInput, PluginMarkup, PluginState],
 ) -> str:
-    """Renders a static version of the plugin as HTML along with a request to log in."""
+    """Renders a static version of the plugin. Used for the Markdown output of users who are not
+    logged in; the HTML output renders the real plugin and TIM shows the login notice.
+    """
     return render_template_string(
         """
 <!--nolazy-->
-<p class="pluginError">
-    Please <tim-login-menu></tim-login-menu> to interact with this component.
-</p>
 {{ static_html|safe }}""",
         static_html=m.get_maybe_empty_static_html(),
     )
@@ -354,8 +357,8 @@ def render_plugin_html(
     :param m: The plugin HTML schema.
     :return: HTML.
     """
-    if m.user_id == "Anonymous" and m.requires_login():
-        return render_plugin_with_login_request(m)
+    # Users who are not logged in get the real plugin too; TIM locks it on the client
+    # (see the login-required attribute of tim-plugin-loader).
     if is_lazy(m):
         return render_plugin_lazy(m)
     return m.get_real_html()
@@ -370,7 +373,7 @@ def render_plugin_md(
     :return: HTML.
     """
     if m.user_id == "Anonymous" and m.requires_login():
-        return render_plugin_with_login_request(m)
+        return render_plugin_static(m)
     return m.get_real_md()
 
 

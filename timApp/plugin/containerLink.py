@@ -62,6 +62,8 @@ class PluginReg:
     skip_reqs: bool = False
     lazy: bool = True
     can_give_task: bool = False
+    # False for plugins that never send answers (reqs key "answerable"), see Plugin.login_required_to_answer.
+    answerable: bool = True
     instance: Any | None = None  # TODO get rid of this; only used by timtable
 
     @property

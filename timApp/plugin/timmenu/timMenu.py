@@ -514,6 +514,7 @@ menu: |!!
         "js": ["timMenu"],
         "multihtml": True,
         "multimd": True,
+        "answerable": False,
         "editor_tabs": editor_tabs,
     }
 

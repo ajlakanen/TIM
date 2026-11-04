@@ -307,8 +307,11 @@ a {#x initword: #} b
         User.get_anon().grant_access(d, AccessType.view)
         db.session.commit()
         self.logout()
-        r = self.get(u, as_tree=True).cssselect(".parContent tim-login-menu")
+        # TIM marks the loader; the client shows the "log in to answer" notice based on it.
+        tree = self.get(u, as_tree=True)
+        r = tree.cssselect('.parContent tim-plugin-loader[login-required="true"]')
         self.assertTrue(r)
+        self.assertFalse(tree.cssselect(".parContent tim-login-menu"))
 
     def test_taskinfo_invalid_inline_plugin(self):
         """Check that invalid inline plugin doesn't affect task info of other plugins"""

@@ -615,7 +615,8 @@ class TIMShowFileServer(http.server.BaseHTTPRequestHandler):
 
         if is_reqs:
             result_json = join_dict(
-                {"multihtml": True, "multimd": True}, get_all_templates(tempdir)
+                {"multihtml": True, "multimd": True, "answerable": False},
+                get_all_templates(tempdir),
             )
             if is_images:
                 result_json.update({"js": ["/svn/js/images.js"]})

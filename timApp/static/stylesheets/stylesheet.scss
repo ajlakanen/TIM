@@ -1621,6 +1621,142 @@ tim-rights-editor {
   opacity: 0.3;
 }
 
+// Tasks locked for users who are not logged in (login-required attribute of tim-plugin-loader):
+// block plugins are covered by a veil with a card that offers login and "Show anyway";
+// inline plugins are covered by a veil with a lock badge in the middle. The plugin behind
+// the veil is inert; after "Show anyway" the block plugin is left as it is (readable,
+// copyable, reachable by assistive technology). The explanation is given once per document
+// by tim-login-required-banner.
+tim-plugin-loader.login-required-locked[wrapper="div"] {
+  position: relative;
+  display: block;
+}
+
+tim-plugin-loader.login-required-locked[wrapper="span"] {
+  position: relative;
+  display: inline-block;
+}
+
+// The lock (icon + "Log in to answer") opens the login dialog. In block plugins it sits
+// in a card on the veil; in inline plugins it is a small badge in the middle of the field,
+// with the label only when the field is wide enough (see PluginLoaderComponent.inlineLockLabelFits).
+tim-plugin-loader .login-required-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7em;
+  color: #1a4a7a;
+  line-height: 1.5;
+
+  .login-required-lock-icon {
+    flex: none;
+    width: 1.2em;
+    height: 1.2em;
+  }
+
+  // The inline badge is a button (keyboard and screen reader support for free).
+  &.inline {
+    cursor: pointer;
+    gap: 0.4em;
+    padding: 0.1em 0.4em;
+    white-space: nowrap;
+    border: 1px solid #6f9fcf;
+    border-radius: 4px;
+    background: #dbeefc;
+    color: inherit;
+    font: inherit;
+    font-size: 0.85em;
+    vertical-align: middle;
+
+    &:hover,
+    &:focus {
+      background: #c9e3fa;
+      text-decoration: none;
+    }
+  }
+}
+
+tim-plugin-loader .login-required-card {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4em 1.4em;
+  padding: 0.5em 1.4em;
+  border: 1px solid #6f9fcf;
+  border-radius: 4px;
+  background: #dbeefc;
+  color: #1a4a7a;
+  font-size: 0.9em;
+
+  // "Show anyway" is secondary to logging in: a quiet link next to the login button.
+  .login-required-show {
+    padding: 0;
+    // Same size as the text of the btn-sm login button, so that the link never outweighs it.
+    font-size: 12px;
+    line-height: inherit;
+    color: #1a4a7a;
+    opacity: 0.85;
+    text-decoration: none;
+
+    &:hover,
+    &:focus {
+      opacity: 1;
+      text-decoration: underline;
+    }
+  }
+}
+
+// The veil covers the whole locked block plugin: the greyish tinted panel shows which
+// task the lock applies to and makes the card stand out from the inactive task. It has
+// no border of its own so that it does not double the plugin's own border.
+tim-plugin-loader .login-required-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 1em;
+  border-radius: 5px;
+  background: rgba(205, 209, 216, 0.6);
+
+  .login-required-card {
+    // Sticky so that the card stays in view in tasks taller than the viewport;
+    // the offset leaves room for the sticky document banner above.
+    position: sticky;
+    top: 4.5em;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.15);
+  }
+}
+
+// The veil of an inline plugin is just a tint with the lock badge centered on it.
+tim-plugin-loader .login-required-overlay.inline {
+  align-items: center;
+  padding: 0;
+  border-radius: 4px;
+  overflow: hidden;
+
+  &.narrow .login-required-lock-label {
+    display: none;
+  }
+}
+
+// After "Show anyway" the card is a bar above the plugin.
+tim-plugin-loader .login-required-bar {
+  margin-bottom: 0.4em;
+}
+
+.login-required-banner {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5em 0.75em;
+  margin-bottom: 1em;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
 .modal-bg {
     position: fixed;
     top: 0;

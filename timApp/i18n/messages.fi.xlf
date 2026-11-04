@@ -11547,6 +11547,38 @@ Syötä useiden käyttäjien osoitteet allekkain tai pilkulla erotettuina.</targ
           <context context-type="linenumber">313,312</context>
         </context-group>
       </trans-unit>
+      <trans-unit id="5698711197357941139" datatype="html">
+        <source>Log in to answer this task.</source>
+        <target state="translated">Kirjaudu sisään vastataksesi tähän tehtävään.</target>
+        <context-group purpose="location">
+          <context context-type="sourcefile">static/scripts/tim/plugin/plugin-loader.component.ts</context>
+          <context context-type="linenumber">63,64</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="6368695462385779892" datatype="html">
+        <source>Log in to answer</source>
+        <target state="translated">Kirjaudu sisään vastataksesi</target>
+        <context-group purpose="location">
+          <context context-type="sourcefile">static/scripts/tim/plugin/plugin-loader.component.ts</context>
+          <context context-type="linenumber">71,72</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="7881130305660917317" datatype="html">
+        <source>You are not logged in. You can read the material, but answering the tasks requires logging in.</source>
+        <target state="translated">Et ole kirjautunut sisään. Voit lukea materiaalin, mutta tehtäviin vastaaminen vaatii kirjautumisen.</target>
+        <context-group purpose="location">
+          <context context-type="sourcefile">static/scripts/tim/user/login-required-banner.component.ts</context>
+          <context context-type="linenumber">16</context>
+        </context-group>
+      </trans-unit>
+      <trans-unit id="4307731295930814407" datatype="html">
+        <source>Show anyway</source>
+        <target state="translated">Näytä silti</target>
+        <context-group purpose="location">
+          <context context-type="sourcefile">static/scripts/tim/plugin/plugin-loader.component.ts</context>
+          <context context-type="linenumber">80,81</context>
+        </context-group>
+      </trans-unit>
     </body>
   </file>
 </xliff>

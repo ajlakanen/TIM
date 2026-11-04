@@ -16,6 +16,7 @@
     {% if task_info and task_info.show %}
     {% include 'partials/task_summary.jinja2' %}
     {% endif %}
+    <tim-login-required-banner></tim-login-required-banner>
     <div id="pars" role="main" {% if lang_id %}lang="{{ lang_id }}"{% endif %}>
         {% include 'partials/paragraphs.jinja2' %}
         <div ng-cloak class="addBottomContainer hidden-print" ng-show="$ctrl.item.rights.editable"

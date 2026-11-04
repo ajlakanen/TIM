@@ -59,6 +59,7 @@ def reqs_handle() -> PluginReqs:
     return {
         "js": ["symbolbutton"],
         "multihtml": True,
+        "answerable": False,
     }
 
 

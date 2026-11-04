@@ -564,21 +564,8 @@ def get_html(self: "TIMServer", ttype: TType, query: QueryClass):
         # return '<img src="' + img + '">'
         return htmldata
 
-    user_id = get_param(query, "user_id", "--")
-    # print("UserId:", user_id)
-    if user_id == "Anonymous":
-        allow_anonymous = str(get_param(query, "anonymous", "false")).lower()
-        # jump = get_param(query, "taskID", "")
-        # print("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX jump: ", jump)
-        if allow_anonymous != "true":
-            return (
-                NOLAZY
-                + '<p class="pluginError">Please <tim-login-menu>'
-                + "</tim-login-menu> to interact with this component</p>"
-                + '<pre class="csRunDiv">'
-                + get_param(query, "byCode", "")
-                + "</pre>"
-            )
+    # TIM shows the "log in to answer" notice above the task for users who are not logged in
+    # (see the login-required attribute of tim-plugin-loader), so no login prompt is rendered here.
     do_lazy = is_lazy(query)
     # do_lazy = False
     # print("do_lazy",do_lazy,type(do_lazy))

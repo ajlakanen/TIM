@@ -21,6 +21,7 @@ import {MarkAllAsReadComponent} from "tim/ui/mark-all-as-read.component";
 import {BootstrapPanelComponent} from "tim/ui/bootstrap-panel.component";
 import {LogoComponent} from "tim/ui/logo.component";
 import {LoginMenuComponent} from "tim/user/login-menu.component";
+import {LoginRequiredBannerComponent} from "tim/user/login-required-banner.component";
 import * as timRoot from "tim/timRoot";
 import {markAsUsed, ModuleArray, StringArray} from "tim/util/utils";
 import {AnnotationComponent} from "tim/velp/annotation.component";
@@ -122,6 +123,7 @@ function createDowngradedAppModule() {
     doDowngrade(dg, "timAddMember", AddMemberComponent);
     doDowngrade(dg, "timFooter", FooterComponent);
     doDowngrade(dg, "timLoginMenu", LoginMenuComponent);
+    doDowngrade(dg, "timLoginRequiredBanner", LoginRequiredBannerComponent);
     doDowngrade(dg, "timLogo", LogoComponent);
     doDowngrade(dg, "bootstrapPanel", BootstrapPanelComponent);
     doDowngrade(dg, "timStart", FrontPageComponent);

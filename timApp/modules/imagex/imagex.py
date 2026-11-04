@@ -63,8 +63,6 @@ class ImagexServer(TimServer):
 
         """
         # print("--Query--"+ query.dump() + "--Query--" ) # uncomment to see query
-        # Get user id from session
-        user_id = get_param(query, "user_id", "--")
         preview = get_param(query, "preview", False)
         hiddentargets = get_param(query, "-targets", None)
 
@@ -89,21 +87,8 @@ class ImagexServer(TimServer):
             jso2["markup"]["targets"] = hiddentargets
             query = get_query_from_json(jso2)
 
-        # do the next if Anonymoys is not allowed to use plugins
-        if user_id == "Anonymous":
-            allow_anonymous = str(get_param(query, "anonymous", "false")).lower()
-            # SANITOIDAAN markupista tuleva syöte
-            jump = get_param(query, "taskID", "")
-            # print("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX jump: ", jump)
-            if allow_anonymous != "true":
-                return (
-                    NOLAZY
-                    + '<p class="pluginError"><a href="/login?anchor='
-                    + jump
-                    + '">Please login to interact with this component</a></p><pre class="csRunDiv">'
-                    + get_param(query, "byCode", "")
-                    + "</pre>"
-                )  # imageX does not have byCode???
+        # TIM shows the "log in to answer" notice above the task for users who are not logged in
+        # (see the login-required attribute of tim-plugin-loader), so no login prompt is rendered here.
 
         jso = query_params_to_map(query.query)
         jso["state"] = query.jso["state"]

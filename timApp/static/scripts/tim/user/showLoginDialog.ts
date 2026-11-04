@@ -7,8 +7,11 @@ let instance: AngularDialogComponent<ILoginParams, void> | undefined;
 
 /**
  * Open login dialog if no other instances are opened.
+ * By default, the dialog logs in (not sign up) as the only user of the session.
  */
-export async function showLoginDialog(params: ILoginParams) {
+export async function showLoginDialog(
+    params: ILoginParams = {showSignup: false, addingToSession: false}
+) {
     if (instance) {
         return;
     }

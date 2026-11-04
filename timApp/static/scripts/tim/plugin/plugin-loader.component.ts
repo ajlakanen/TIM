@@ -32,6 +32,7 @@ import {TimDefer} from "tim/util/timdefer";
 import type {ReadonlyMoment} from "tim/util/readonlymoment";
 import {timLogTime} from "tim/util/timTiming";
 import {Users} from "tim/user/userService";
+import {showLoginDialog} from "tim/user/showLoginDialog";
 import type {AnswerBrowserComponent} from "tim/answer/answer-browser.component";
 import {AnswerBrowserModule} from "tim/answer/answer-browser.component";
 import type {IGenericPluginMarkup} from "tim/plugin/attributes";
@@ -57,6 +58,24 @@ function isElement(n: Node): n is Element {
         <tim-alert *ngIf="error" severity="danger">
             {{ error }}
         </tim-alert>
+        <ng-template #lockIcon>
+            <svg class="login-required-lock-icon" aria-hidden="true" viewBox="0 0 16 16" width="1em" height="1em">
+                <path d="M4.5 7V5a3.5 3.5 0 0 1 7 0v2" fill="none" stroke="#4a4a4a" stroke-width="1.6"/>
+                <rect x="2.5" y="7" width="11" height="8" rx="1.5" fill="#f2a93b" stroke="#b87514" stroke-width="0.8"/>
+                <circle cx="8" cy="10.5" r="1.1" fill="#6b4206"/>
+                <rect x="7.4" y="10.8" width="1.2" height="2.2" rx="0.4" fill="#6b4206"/>
+            </svg>
+        </ng-template>
+        <ng-template #lockCard>
+            <span class="login-required-lock">
+                <ng-container *ngTemplateOutlet="lockIcon"></ng-container>
+                <button class="btn btn-default btn-sm login-required-login" type="button" [title]="lockTitle" (click)="openLoginDialog()" i18n>Log in to answer</button>
+            </span>
+            <button *ngIf="!lockedPluginShown" class="btn btn-link login-required-show" type="button" (click)="showLockedPlugin()" i18n>Show anyway</button>
+        </ng-template>
+        <div *ngIf="isLocked() && wrapper=='div' && lockedPluginShown" class="login-required-card login-required-bar">
+            <ng-container *ngTemplateOutlet="lockCard"></ng-container>
+        </div>
         <answerbrowser *ngIf="type != 'none' && parsedTaskId && showBrowser && !preview && !unlockable && !lockedByPrerequisite"
                        [taskId]="parsedTaskId"
                        [answerId]="answerId">
@@ -84,16 +103,32 @@ function isElement(n: Node): n is Element {
                     title="{{getPrerequisiteUnlockText()}}">{{getPrerequisiteUnlockText()}}</button>
             <div *ngIf="lockedError">{{lockedError}}</div>
         </div>
-        <div *ngIf="wrapper=='div'" [style.visibility]="taskHidden ? 'hidden' : 'visible'" #wrapper [attr.id]="id" [attr.plugin-type]="pluginType">
+        <div *ngIf="wrapper=='div'" [style.visibility]="taskHidden ? 'hidden' : 'visible'" #wrapper [attr.id]="id" [attr.plugin-type]="pluginType" [attr.inert]="isVeiled() ? '' : null">
             <ng-container *ngTemplateOutlet="tempOutlet"></ng-container>
             <ng-container #pluginPlacement></ng-container>
             <div *ngIf="nonPluginHtml" [innerHTML]="nonPluginHtml | purify"></div>
         </div>
-        <span *ngIf="wrapper=='span'" [style.visibility]="taskHidden ? 'hidden' : 'visible'" #wrapper [attr.id]="id" [attr.plugin-type]="pluginType">
+        <span *ngIf="wrapper=='span'" [style.visibility]="taskHidden ? 'hidden' : 'visible'" #wrapper [attr.id]="id" [attr.plugin-type]="pluginType" [attr.inert]="isVeiled() ? '' : null">
             <ng-container *ngTemplateOutlet="tempOutlet"></ng-container>
             <ng-container #pluginPlacement></ng-container>
             <div *ngIf="nonPluginHtml" [innerHTML]="nonPluginHtml | purify"></div>
         </span>
+        <span *ngIf="isVeiled() && wrapper=='span'" class="login-required-overlay inline" [class.narrow]="!inlineLockLabelFits">
+            <button #inlineLock
+                    class="login-required-lock inline"
+                    type="button"
+                    [title]="lockTitle"
+                    [attr.aria-label]="lockTitle"
+                    (click)="openLoginDialog()">
+                <ng-container *ngTemplateOutlet="lockIcon"></ng-container>
+                <span class="login-required-lock-label" i18n>Log in to answer</span>
+            </button>
+        </span>
+        <div *ngIf="isVeiled() && wrapper=='div'" class="login-required-overlay">
+            <div class="login-required-card">
+                <ng-container *ngTemplateOutlet="lockCard"></ng-container>
+            </div>
+        </div>
         <ng-template #tempOutlet>
             <ng-content #contenthtml *ngIf="defaultload"></ng-content>
         </ng-template>
@@ -106,6 +141,7 @@ function isElement(n: Node): n is Element {
     `,
     host: {
         "[class.lazy-answer-inactive]": "lazyActivated && !activated",
+        "[class.login-required-locked]": "isLocked()",
     },
 })
 export class PluginLoaderComponent implements AfterViewInit, OnDestroy, OnInit {
@@ -136,6 +172,7 @@ export class PluginLoaderComponent implements AfterViewInit, OnDestroy, OnInit {
     @Input() public pluginType!: string;
     @Input() public preview?: boolean;
     @ViewChild("wrapper") pluginWrapper?: ElementRef<HTMLElement>;
+    @ViewChild("inlineLock") inlineLock?: ElementRef<HTMLElement>;
     @ContentChild("contenthtml") contenthtml?: ElementRef<HTMLElement>;
     public defaultload = true;
     loadPluginAfterInit = false;
@@ -155,6 +192,55 @@ export class PluginLoaderComponent implements AfterViewInit, OnDestroy, OnInit {
     @Input() public lockedButtonText?: string;
     @Input() public lockedError?: string;
     @Input() public eagerlyLoadState?: boolean;
+    /**
+     * Set by the server when the viewer is not logged in and the plugin markup does not allow
+     * anonymous answers; the loader then shows a "log in to answer" notice above the task.
+     */
+    @Input() public loginRequired?: boolean;
+    lockTitle = $localize`Log in to answer this task.`;
+
+    /**
+     * Whether the task is locked because the viewer must log in first. A locked plugin is
+     * covered by a veil (see isVeiled) with a lock that offers login. A block plugin also
+     * has "Show anyway", after which the plugin is left as it is, so that it stays readable
+     * with a screen reader and its content can be copied. Answering fails on the server anyway.
+     */
+    isLocked() {
+        return !!this.loginRequired && !this.preview;
+    }
+
+    /**
+     * Whether the "Log in to answer" label fits in the lock of a locked inline plugin;
+     * in a narrow field only the lock icon is shown. See observeInlineLockRoom.
+     */
+    inlineLockLabelFits = true;
+    private inlineLockObserver?: ResizeObserver;
+    private inlineLockFullWidth?: number;
+
+    /** The user chose "Show anyway": the veil is removed and the login card becomes a bar above the plugin. */
+    lockedPluginShown = false;
+
+    /**
+     * Removes the veil. The plugin is then loaded as if hovered, so that a lazy plugin does not
+     * stay static until the pointer leaves and re-enters the task.
+     */
+    showLockedPlugin() {
+        this.lockedPluginShown = true;
+        void this.loadPlugin();
+    }
+
+    /**
+     * Whether the locked plugin is covered by the veil that carries the lock. The covered
+     * plugin is inert so that it cannot be used behind the veil (e.g. text typed into a field
+     * could not be saved anyway), and a lazy plugin is not replaced with the real one while
+     * covered. Only a block plugin can be uncovered ("Show anyway").
+     */
+    isVeiled() {
+        return (
+            this.isLocked() &&
+            (this.wrapper == "span" || !this.lockedPluginShown)
+        );
+    }
     error = "";
 
     timed = false;
@@ -269,16 +355,17 @@ export class PluginLoaderComponent implements AfterViewInit, OnDestroy, OnInit {
             return;
         }
 
-        this.elementRef.nativeElement.addEventListener("mouseenter", () => {
-            this.activated = true;
-            this.loadPlugin();
-        });
-        this.elementRef.nativeElement.addEventListener("touchstart", () => {
-            this.activated = true;
-            this.loadPlugin();
-        });
+        this.elementRef.nativeElement.addEventListener(
+            "mouseenter",
+            this.activationHandler
+        );
+        this.elementRef.nativeElement.addEventListener(
+            "touchstart",
+            this.activationHandler
+        );
         const pluginhtml = this.pluginWrapper.nativeElement.innerHTML;
         if (!pluginhtml.startsWith(LAZY_COMMENT_MARKER)) {
+            // A non-lazy plugin is shown even when locked so that the task content stays visible.
             const component = this.pluginWrapper.nativeElement
                 .childNodes[0] as HTMLElement;
             this.determineAndSetComponent(component);
@@ -286,19 +373,49 @@ export class PluginLoaderComponent implements AfterViewInit, OnDestroy, OnInit {
         if (this.loadPluginAfterInit || this.eagerlyLoadState) {
             this.loadPlugin();
         }
+        if (this.inlineLock) {
+            this.observeInlineLockRoom(
+                this.inlineLock.nativeElement,
+                this.pluginWrapper.nativeElement
+            );
+        }
+    }
+
+    /**
+     * Shows the label of the inline lock only when the plugin is wide enough for it.
+     * The width of the lock with the label is measured once, while the label is still
+     * shown, and compared with the plugin width whenever the plugin is resized.
+     */
+    private observeInlineLockRoom(lock: HTMLElement, wrapper: HTMLElement) {
+        this.inlineLockObserver = new ResizeObserver(() => {
+            this.inlineLockFullWidth ??= lock.offsetWidth;
+            const fits = wrapper.offsetWidth >= this.inlineLockFullWidth + 16;
+            if (fits !== this.inlineLockLabelFits) {
+                this.zone.run(() => (this.inlineLockLabelFits = fits));
+            }
+        });
+        this.inlineLockObserver.observe(wrapper);
     }
 
     ngOnDestroy() {
         this.removeActivationHandlers();
+        this.inlineLockObserver?.disconnect();
         this.currentModRef?.destroy();
     }
 
+    private activationHandler = () => {
+        this.activated = true;
+        void this.loadPlugin();
+    };
+
     private removeActivationHandlers() {
-        this.elementRef.nativeElement.removeEventListener("mouseenter", () =>
-            this.loadPlugin()
+        this.elementRef.nativeElement.removeEventListener(
+            "mouseenter",
+            this.activationHandler
         );
-        this.elementRef.nativeElement.removeEventListener("touchstart", () =>
-            this.loadPlugin()
+        this.elementRef.nativeElement.removeEventListener(
+            "touchstart",
+            this.activationHandler
         );
     }
 
@@ -359,6 +476,13 @@ export class PluginLoaderComponent implements AfterViewInit, OnDestroy, OnInit {
 
     async loadPlugin() {
         if (this.compiled) {
+            return;
+        }
+        if (this.isVeiled()) {
+            // A plugin behind the veil is not replaced with the real one and sends no init requests,
+            // regardless of who asks for the load (hover, form mode, user change, review...).
+            // Callers may await abLoad, so resolve it: a viewer who cannot answer has no answer browser.
+            this.abLoad.resolve(null);
             return;
         }
         // PluginLoader is wrapped in AngularJS, so outside calls (e.g. via viewctrl) may not be properly tracked
@@ -647,6 +771,10 @@ export class PluginLoaderComponent implements AfterViewInit, OnDestroy, OnInit {
 
     warnAboutMissingTaskId() {
         this.error = $localize`Plugin is missing task id`;
+    }
+
+    openLoginDialog() {
+        void showLoginDialog();
     }
 
     getPrerequisiteLockedText() {
